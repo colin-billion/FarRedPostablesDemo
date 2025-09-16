@@ -7,19 +7,15 @@ plugins {
 
 chaquopy {
     defaultConfig {
-        buildPython("C:\\Users\\colin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe") // Colin's Python
+        // Use full path to Python 3.11
+        buildPython("C:\\Users\\colin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe")
         version = "3.11"
         pip {
-            // Start with just basic packages that are known to work
-            install("numpy")
-            install("pandas")
+            // Start with NO packages to test basic Python functionality
+            // install("numpy")
+            // install("pandas")
             
-            // Add more packages once basic functionality is confirmed
-            // install("scipy")           // Known to be problematic
-            // install("opencv-python")   // Can be heavy
-            // install("matplotlib")      // Can be heavy  
-            // install("scikit-learn")    // Can be heavy
-            // install("filterpy")        // Can be heavy
+            // Add packages back once basic Python works
         }
     }
     sourceSets { }
@@ -40,9 +36,9 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
         // Required for Chaquopy - specify which CPU architectures to support
-        // Note: Python 3.12 only supports arm64-v8a and x86_64
+        // Python 3.11 supports more architectures than 3.12
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
         }
     }
 
