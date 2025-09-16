@@ -23,9 +23,13 @@ import androidx.core.content.ContextCompat
 import co.billionlabs.farredpostablesdemo.ui.theme.FarRedPostablesDemoTheme
 import co.billionlabs.farredpostablesdemo.ui.components.CameraPreview
 import co.billionlabs.farredpostablesdemo.utils.ScreenController
+import co.billionlabs.farredpostablesdemo.utils.PythonHelper
+import co.billionlabs.farredpostablesdemo.utils.PupilTrackingHelper
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+    
+    private var pupilHelper: PupilTrackingHelper? = null
     
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -52,12 +56,32 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
+        // Initialize Python
+        try {
+            Log.d("MainActivity", "Starting Python initialization...")
+            Log.d("MainActivity", "Python path: C:\\Users\\colin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe")
+            Log.d("MainActivity", "Python version: 3.11")
+            
+            PythonHelper.initializePython()
+            Log.d("MainActivity", "PythonHelper.initializePython() completed")
+            
+            pupilHelper = PupilTrackingHelper()
+            Log.d("MainActivity", "PupilTrackingHelper created successfully")
+            
+            Log.d("MainActivity", "Python initialized successfully")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to initialize Python: ${e.message}")
+            Log.e("MainActivity", "Exception type: ${e.javaClass.simpleName}")
+            Log.e("MainActivity", "Python initialization error", e)
+            pupilHelper = null
+        }
+        
         // Request camera permissions
         requestCameraPermissions()
         
         setContent {
             FarRedPostablesDemoTheme {
-                VideoRecordingScreen()
+                VideoRecordingScreen(pupilHelper)
             }
         }
     }
@@ -96,7 +120,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun VideoRecordingScreen() {
+fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     val context = LocalContext.current
     val activity = context as ComponentActivity
     val screenController = remember { ScreenController(activity) }
@@ -106,6 +130,7 @@ fun VideoRecordingScreen() {
     var isInSequence by remember { mutableStateOf(false) }
     var currentBackgroundColor by remember { mutableStateOf(Color.Red) }
     var sequencePhase by remember { mutableStateOf("") }
+    var pythonTestResult by remember { mutableStateOf<String?>(null) }
     
     // Initialize screen settings
     LaunchedEffect(Unit) {
@@ -171,6 +196,33 @@ fun VideoRecordingScreen() {
                     style = MaterialTheme.typography.headlineMedium,
                     color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
                 )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Button(
+                    onClick = {
+                        pythonTestResult = pupilHelper?.testPythonIntegration() 
+                            ?: "Python not initialized"
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (currentBackgroundColor == Color.White) Color.Blue else Color.Green
+                    )
+                ) {
+                    Text(
+                        text = if (pupilHelper != null) "Test Python" else "Python Not Available",
+                        color = Color.White
+                    )
+                }
+                
+                pythonTestResult?.let { result ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = result,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (currentBackgroundColor == Color.White) Color.Black else Color.White,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 

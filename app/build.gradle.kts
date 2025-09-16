@@ -2,7 +2,35 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.chaquopy)
 }
+
+chaquopy {
+    defaultConfig {
+        buildPython("C:\\Users\\colin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe") // Colin's Python
+        version = "3.11"
+        pip {
+            // Core scientific computing libraries
+            install("scipy")
+            install("numpy")
+            install("pandas")
+            
+            // Computer vision and image processing
+            install("opencv-python")
+            
+            // Plotting and visualization
+            install("matplotlib")
+            
+            // Machine learning (for filtering algorithms)
+            install("scikit-learn")
+            
+            // Kalman filtering
+            install("filterpy")
+        }
+    }
+    sourceSets { }
+}
+
 
 android {
     namespace = "co.billionlabs.farredpostablesdemo"
@@ -16,6 +44,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        // Required for Chaquopy - specify which CPU architectures to support
+        // Note: Python 3.12 only supports arm64-v8a and x86_64
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -38,7 +72,6 @@ android {
         compose = true
     }
 }
-
 
 dependencies {
 
