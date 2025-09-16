@@ -13,11 +13,27 @@ class PythonHelper {
         private var pythonInstance: Python? = null
         
         /**
+         * Check if Python is initialized
+         */
+        fun isInitialized(): Boolean = pythonInstance != null
+        
+        /**
+         * Get the Python instance (must be initialized first)
+         */
+        fun getInstance(): Python {
+            if (pythonInstance == null) {
+                throw IllegalStateException("Python not initialized. Call initializePython(context) first.")
+            }
+            return pythonInstance!!
+        }
+        
+        /**
          * Initialize Python platform and get Python instance
          * Call this once when your app starts
+         * @param context The application context (usually from Activity)
          */
-        fun initializePython(): Python {
-            android.util.Log.d("PythonHelper", "initializePython() called")
+        fun initializePython(context: android.content.Context): Python {
+            android.util.Log.d("PythonHelper", "initializePython() called with context: ${context.javaClass.simpleName}")
             
             if (pythonInstance == null) {
                 android.util.Log.d("PythonHelper", "pythonInstance is null, initializing...")
@@ -25,7 +41,7 @@ class PythonHelper {
                 if (!Python.isStarted()) {
                     android.util.Log.d("PythonHelper", "Python not started, starting Python...")
                     try {
-                        Python.start(AndroidPlatform(android.app.Application()))
+                        Python.start(AndroidPlatform(context.applicationContext))
                         android.util.Log.d("PythonHelper", "Python.start() completed")
                     } catch (e: Exception) {
                         android.util.Log.e("PythonHelper", "Failed to start Python: ${e.message}", e)
@@ -51,18 +67,28 @@ class PythonHelper {
         }
         
         /**
-         * Get a Python module
+         * Get a Python module (requires Python to be initialized first)
          * @param moduleName Name of the Python module to import
          * @return Python module object
          */
-        fun getModule(moduleName: String) = initializePython().getModule(moduleName)
+        fun getModule(moduleName: String): com.chaquo.python.PyObject {
+            if (pythonInstance == null) {
+                throw IllegalStateException("Python not initialized. Call initializePython(context) first.")
+            }
+            return pythonInstance!!.getModule(moduleName)
+        }
         
         /**
-         * Run a simple Python expression
+         * Run a simple Python expression (requires Python to be initialized first)
          * @param expression Python expression to evaluate
-         * @return Result of the expression
+         * @return Result of the expression, or null if not found
          */
-        fun runExpression(expression: String) = initializePython().getBuiltins().get(expression)
+        fun runExpression(expression: String): com.chaquo.python.PyObject? {
+            if (pythonInstance == null) {
+                throw IllegalStateException("Python not initialized. Call initializePython(context) first.")
+            }
+            return pythonInstance!!.getBuiltins().get(expression)
+        }
     }
 }
 
@@ -71,7 +97,11 @@ class PythonHelper {
  */
 class PupilTrackingHelper {
     
-    private val python = PythonHelper.initializePython()
+    private val python: Python
+    
+    init {
+        python = PythonHelper.getInstance()
+    }
     
     /**
      * Process a video file using your pupil tracking pipeline
@@ -146,14 +176,17 @@ class PupilTrackingHelper {
      */
     fun testPythonIntegration(): String {
         try {
-            // Test basic Python functionality
+            // Test basic Python functionality with Python list
             val builtins = python.getBuiltins()
-            val result = builtins.callAttr("sum", listOf(1, 2, 3, 4, 5))
+            
+            // Create a Python list instead of passing Java/Kotlin list
+            val pythonList = python.getBuiltins().callAttr("list", arrayOf(1, 2, 3, 4, 5))
+            val result = builtins.callAttr("sum", pythonList)
             
             // Test numpy if available
             try {
                 val numpy = python.getModule("numpy")
-                val array = numpy.callAttr("array", listOf(1, 2, 3, 4, 5))
+                val array = numpy.callAttr("array", pythonList)
                 val mean = array.callAttr("mean")
                 return "Python test successful! Builtin sum = $result, NumPy mean = $mean"
             } catch (e: Exception) {

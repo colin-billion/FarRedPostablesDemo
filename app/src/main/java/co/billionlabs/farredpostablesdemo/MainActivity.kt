@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
             Log.d("MainActivity", "Python path: C:\\Users\\colin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe")
             Log.d("MainActivity", "Python version: 3.11")
             
-            PythonHelper.initializePython()
+            PythonHelper.initializePython(this)
             Log.d("MainActivity", "PythonHelper.initializePython() completed")
             
             pupilHelper = PupilTrackingHelper()
