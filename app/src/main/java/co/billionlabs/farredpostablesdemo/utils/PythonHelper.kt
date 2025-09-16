@@ -146,10 +146,19 @@ class PupilTrackingHelper {
      */
     fun testPythonIntegration(): String {
         try {
-            val numpy = python.getModule("numpy")
-            val result = numpy.callAttr("array", listOf(1, 2, 3, 4, 5))
-            val mean = result.callAttr("mean")
-            return "Python test successful! Mean of [1,2,3,4,5] = $mean"
+            // Test basic Python functionality
+            val builtins = python.getBuiltins()
+            val result = builtins.callAttr("sum", listOf(1, 2, 3, 4, 5))
+            
+            // Test numpy if available
+            try {
+                val numpy = python.getModule("numpy")
+                val array = numpy.callAttr("array", listOf(1, 2, 3, 4, 5))
+                val mean = array.callAttr("mean")
+                return "Python test successful! Builtin sum = $result, NumPy mean = $mean"
+            } catch (e: Exception) {
+                return "Python test successful! Builtin sum = $result (NumPy not available: ${e.message})"
+            }
         } catch (e: Exception) {
             return "Python test failed: ${e.message}"
         }

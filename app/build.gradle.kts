@@ -10,22 +10,16 @@ chaquopy {
         buildPython("C:\\Users\\colin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe") // Colin's Python
         version = "3.11"
         pip {
-            // Core scientific computing libraries
-            install("scipy")
+            // Start with just basic packages that are known to work
             install("numpy")
             install("pandas")
             
-            // Computer vision and image processing
-            install("opencv-python")
-            
-            // Plotting and visualization
-            install("matplotlib")
-            
-            // Machine learning (for filtering algorithms)
-            install("scikit-learn")
-            
-            // Kalman filtering
-            install("filterpy")
+            // Add more packages once basic functionality is confirmed
+            // install("scipy")           // Known to be problematic
+            // install("opencv-python")   // Can be heavy
+            // install("matplotlib")      // Can be heavy  
+            // install("scikit-learn")    // Can be heavy
+            // install("filterpy")        // Can be heavy
         }
     }
     sourceSets { }
