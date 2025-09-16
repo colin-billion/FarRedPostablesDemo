@@ -11,11 +11,16 @@ chaquopy {
         buildPython("C:\\Users\\colin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe")
         version = "3.11"
         pip {
-            // Start with NO packages to test basic Python functionality
-            // install("numpy")
-            // install("pandas")
+            // Start with essential packages that are known to work well with Chaquopy
+            install("numpy")
+            install("pandas")
             
-            // Add packages back once basic Python works
+            // Add more packages once these work
+            // install("scipy")           // Can be problematic
+            // install("opencv-python")   // Can be heavy
+            // install("matplotlib")      // Can be heavy  
+            // install("scikit-learn")    // Can be heavy
+            // install("filterpy")        // Can be heavy
         }
     }
     sourceSets { }
