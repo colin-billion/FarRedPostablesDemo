@@ -106,20 +106,116 @@ class PupilTrackingHelper {
     /**
      * Process a video file using your pupil tracking pipeline
      * @param videoPath Path to the video file
-     * @return Processing result
+     * @return Processing result with output directory path
      */
-    fun processVideo(videoPath: String): String {
+    fun processVideo(videoPath: String): Map<String, Any> {
         try {
-            // Import your pupil tracking module
-            val pupilModule = python.getModule("pupil_tracking_pipeline")
+            android.util.Log.d("PupilTrackingHelper", "Starting video processing: $videoPath")
             
-            // Call the main processing function
-            // Note: You may need to modify your Python scripts to expose functions properly
-            val result = pupilModule.callAttr("process_video", videoPath)
+            // Import the simplified pupil tracking pipeline module
+            val pupilModule = python.getModule("pupil_tracking_pipeline_simple")
             
-            return "Processing completed: $result"
+            // Call the main processing function from your simplified pipeline
+            // This should process the video and return the output directory
+            val result = pupilModule.callAttr("main", videoPath)
+            
+            android.util.Log.d("PupilTrackingHelper", "Video processing completed")
+            
+            // Check if result is null (pipeline failed)
+            if (result == null) {
+                android.util.Log.e("PupilTrackingHelper", "Python script returned null - pipeline failed")
+                return mapOf(
+                    "success" to false,
+                    "message" to "Pupil tracking pipeline failed - check video file and try again",
+                    "videoPath" to videoPath
+                )
+            }
+            
+            // Return processing results
+            return mapOf(
+                "success" to true,
+                "message" to "Processing completed successfully",
+                "outputDir" to result.toString(),
+                "videoPath" to videoPath
+            )
         } catch (e: Exception) {
-            return "Error processing video: ${e.message}"
+            android.util.Log.e("PupilTrackingHelper", "Error processing video: ${e.message}", e)
+            return mapOf(
+                "success" to false,
+                "message" to "Error processing video: ${e.message}",
+                "error" to e.toString()
+            )
+        }
+    }
+    
+    /**
+     * Get pupil data from the processed results
+     * @param outputDir Directory where processing results were saved
+     * @param videoName Name of the video file (without extension)
+     * @return Pupil data as a list of maps
+     */
+    fun getPupilTimeSeries(outputDir: String, videoName: String): List<Map<String, Any>> {
+        try {
+            val pandas = python.getModule("pandas")
+            val os = python.getModule("os")
+            val path = python.getModule("pathlib").callAttr("Path")
+            
+            // Construct the CSV file path
+            val csvPath = path.callAttr("join", outputDir, videoName, "pupil_data_filtered_${videoName}.csv")
+            
+            android.util.Log.d("PupilTrackingHelper", "Loading pupil data from: $csvPath")
+            
+            // Check if file exists
+            if (!os.callAttr("path", "exists", csvPath).toBoolean()) {
+                android.util.Log.w("PupilTrackingHelper", "Filtered data not found, trying clean data")
+                // Try the clean data instead
+                val cleanCsvPath = path.callAttr("join", outputDir, videoName, "pupil_data_clean_${videoName}.csv")
+                if (os.callAttr("path", "exists", cleanCsvPath).toBoolean()) {
+                    return loadPupilDataFromCsv(pandas, cleanCsvPath.toString())
+                } else {
+                    android.util.Log.e("PupilTrackingHelper", "No pupil data files found")
+                    return emptyList()
+                }
+            }
+            
+            return loadPupilDataFromCsv(pandas, csvPath.toString())
+        } catch (e: Exception) {
+            android.util.Log.e("PupilTrackingHelper", "Error loading pupil data: ${e.message}", e)
+            return emptyList()
+        }
+    }
+    
+    private fun loadPupilDataFromCsv(pandas: com.chaquo.python.PyObject, csvPath: String): List<Map<String, Any>> {
+        try {
+            // Read CSV file
+            val df = pandas.callAttr("read_csv", csvPath)
+            
+            // Convert to list of dictionaries
+            val result = mutableListOf<Map<String, Any>>()
+            val pythonList = df.callAttr("to_dict", "records")
+            val pythonListAsList = pythonList.asList()
+            
+            for (item in pythonListAsList) {
+                val itemMap = mutableMapOf<String, Any>()
+                val itemDict = item.asMap()
+                
+                for ((key, value) in itemDict) {
+                    val keyStr = key.toString()
+                    itemMap[keyStr] = when {
+                        value != null && value.toString().matches(Regex("-?\\d+(\\.\\d+)?")) -> value.toDouble()
+                        value != null && (value.toString().equals("true", ignoreCase = true) || value.toString().equals("false", ignoreCase = true)) -> value.toBoolean()
+                        value != null -> value.toString()
+                        else -> value?.toString() ?: ""
+                    }
+                }
+                result.add(itemMap)
+            }
+            
+            android.util.Log.d("PupilTrackingHelper", "Loaded ${result.size} pupil data points")
+            return result
+        } catch (e: Exception) {
+            android.util.Log.e("PupilTrackingHelper", "Error parsing CSV: ${e.message}", e)
+            return emptyList()
         }
     }
     

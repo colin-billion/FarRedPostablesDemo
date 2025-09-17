@@ -22,10 +22,12 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import co.billionlabs.farredpostablesdemo.ui.theme.FarRedPostablesDemoTheme
 import co.billionlabs.farredpostablesdemo.ui.components.CameraPreview
+import co.billionlabs.farredpostablesdemo.ui.components.PupilDataDialog
 import co.billionlabs.farredpostablesdemo.utils.ScreenController
 import co.billionlabs.farredpostablesdemo.utils.PythonHelper
 import co.billionlabs.farredpostablesdemo.utils.PupilTrackingHelper
 import kotlinx.coroutines.delay
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     
@@ -131,6 +133,12 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     var currentBackgroundColor by remember { mutableStateOf(Color.Red) }
     var sequencePhase by remember { mutableStateOf("") }
     var pythonTestResult by remember { mutableStateOf<String?>(null) }
+    
+    // Pupil tracking states
+    var pupilData by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
+    var showPupilDialog by remember { mutableStateOf(false) }
+    var isProcessingVideo by remember { mutableStateOf(false) }
+    var processingMessage by remember { mutableStateOf("") }
     
     // Initialize screen settings
     LaunchedEffect(Unit) {
@@ -246,6 +254,18 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                             color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
                         )
                     }
+                    isProcessingVideo -> {
+                        Text(
+                            text = processingMessage,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.Yellow
+                        )
+                        Text(
+                            text = "Please wait...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                    }
                     videoPath != null -> {
                         Text(
                             text = "Video saved successfully!",
@@ -257,6 +277,13 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.Gray
                         )
+                        if (processingMessage.isNotEmpty()) {
+                            Text(
+                                text = processingMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Red
+                            )
+                        }
                     }
                     else -> {
                         Text(
@@ -281,6 +308,27 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                     videoPath = path
                     isRecording = false
                     Log.d("MainActivity", "Video recorded: $path")
+                    
+                    // Process the video with pupil tracking
+                    if (pupilHelper != null) {
+                        processVideoForPupilTracking(
+                            path, 
+                            pupilHelper!!,
+                            onProcessingComplete = { data ->
+                                pupilData = data
+                                showPupilDialog = true
+                                isProcessingVideo = false
+                                processingMessage = ""
+                            },
+                            onProcessingError = { error ->
+                                processingMessage = error
+                                isProcessingVideo = false
+                                Log.e("MainActivity", "Pupil processing error: $error")
+                            }
+                        )
+                        isProcessingVideo = true
+                        processingMessage = "Processing video for pupil tracking..."
+                    }
                 },
                 onRecordingStateChanged = { recording ->
                     isRecording = recording
@@ -291,5 +339,55 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 modifier = Modifier.fillMaxSize()
             )
         }
+        
+        // Show pupil data dialog when processing is complete
+        if (showPupilDialog) {
+            PupilDataDialog(
+                pupilData = pupilData,
+                onDismiss = {
+                    showPupilDialog = false
+                    pupilData = emptyList()
+                }
+            )
+        }
+    }
+}
+
+/**
+ * Process video for pupil tracking in a background coroutine
+ */
+private fun processVideoForPupilTracking(
+    videoPath: String,
+    pupilHelper: PupilTrackingHelper,
+    onProcessingComplete: (List<Map<String, Any>>) -> Unit = {},
+    onProcessingError: (String) -> Unit = {}
+) {
+    // This would be called from a coroutine scope in a real implementation
+    // For now, we'll handle it synchronously in the UI thread
+    try {
+        Log.d("MainActivity", "Starting pupil tracking processing for: $videoPath")
+        
+        // Process the video
+        val result = pupilHelper.processVideo(videoPath)
+        
+        if (result["success"] == true) {
+            // Extract video name from path
+            val videoFile = File(videoPath)
+            val videoName = videoFile.nameWithoutExtension
+            
+            // Get pupil data from the output directory returned by the pipeline
+            val outputDir = result["outputDir"]?.toString() ?: videoFile.parent ?: ""
+            val pupilData = pupilHelper.getPupilTimeSeries(outputDir, videoName)
+            
+            Log.d("MainActivity", "Pupil tracking completed, found ${pupilData.size} data points")
+            onProcessingComplete(pupilData)
+        } else {
+            val errorMsg = result["message"]?.toString() ?: "Unknown error"
+            Log.e("MainActivity", "Pupil tracking failed: $errorMsg")
+            onProcessingError(errorMsg)
+        }
+    } catch (e: Exception) {
+        Log.e("MainActivity", "Error in pupil tracking: ${e.message}", e)
+        onProcessingError("Processing error: ${e.message}")
     }
 }

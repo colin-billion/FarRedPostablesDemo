@@ -7,20 +7,17 @@ plugins {
 
 chaquopy {
     defaultConfig {
-        // Use full path to Python 3.11
-        buildPython("C:\\Users\\colin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe")
-        version = "3.11"
+        // Use Python 3.8 for better package compatibility
+        version = "3.8"
         pip {
-            // Start with essential packages that are known to work well with Chaquopy
-            install("numpy")
-            install("pandas")
+            // Let Chaquopy choose the best available pre-compiled versions for Python 3.8
+            install("numpy")  // Chaquopy will use its pre-compiled wheel
+            install("pandas")  // Chaquopy will use its pre-compiled wheel
+            install("opencv-python")  // Chaquopy will use its pre-compiled wheel
+            install("matplotlib")  // Chaquopy will use its pre-compiled wheel
             
-            // Add more packages once these work
-            // install("scipy")           // Can be problematic
-            // install("opencv-python")   // Can be heavy
-            // install("matplotlib")      // Can be heavy  
-            // install("scikit-learn")    // Can be heavy
-            // install("filterpy")        // Can be heavy
+            // Note: scikit-learn removed - using OpenCV connected components instead
+            // No version constraints = Chaquopy uses pre-compiled wheels
         }
     }
     sourceSets { }

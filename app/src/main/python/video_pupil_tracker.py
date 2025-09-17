@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from pathlib import Path
 import argparse
-from sklearn.cluster import DBSCAN
+# Removed sklearn dependency - using simple clustering instead
 
 class CleanVideoPupilTracker:
     """Clean video pupil tracker based on working debug script logic"""
@@ -30,7 +30,7 @@ class CleanVideoPupilTracker:
         # Initialize video capture
         self.cap = cv2.VideoCapture(video_path)
         if not self.cap.isOpened():
-            raise ValueError(f"Could not open video: {video_path}")
+            raise ValueError(f"Could not open video: {video_path}. Check if file exists and is a valid video format.")
         
         # Get video properties
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -309,7 +309,7 @@ class CleanVideoPupilTracker:
         return expanded_coords
     
     def find_largest_cluster(self, dark_coords):
-        """Find the largest cluster of dark pixels using DBSCAN"""
+        """Find the largest cluster of dark pixels using OpenCV connected components"""
         if len(dark_coords[0]) == 0:
             return None, None
         
@@ -317,32 +317,50 @@ class CleanVideoPupilTracker:
         y_coords, x_coords = dark_coords
         points = np.column_stack((x_coords, y_coords))
         
-        # Use DBSCAN to find clusters
-        clustering = DBSCAN(eps=10, min_samples=50).fit(points)
-        labels = clustering.labels_
+        # Create a binary mask from the dark coordinates
+        # Find bounds of the points
+        min_x, max_x = int(np.min(x_coords)), int(np.max(x_coords))
+        min_y, max_y = int(np.min(y_coords)), int(np.max(y_coords))
         
-        # Find the largest cluster (excluding noise with label -1)
-        unique_labels = set(labels)
-        if -1 in unique_labels:
-            unique_labels.remove(-1)
+        # Create binary mask
+        mask = np.zeros((max_y - min_y + 1, max_x - min_x + 1), dtype=np.uint8)
+        mask[y_coords - min_y, x_coords - min_x] = 255
         
-        if len(unique_labels) == 0:
+        # Use OpenCV connected components to find clusters
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        
+        # Find the largest cluster (excluding background with label 0)
+        if num_labels <= 1:  # Only background
             return None, None
         
-        # Find largest cluster
-        largest_cluster_size = 0
-        largest_cluster_label = None
+        # Find largest cluster by area
+        largest_cluster_label = 1  # Start with first non-background component
+        largest_area = stats[1, cv2.CC_STAT_AREA]
         
-        for label in unique_labels:
-            cluster_size = np.sum(labels == label)
-            if cluster_size > largest_cluster_size:
-                largest_cluster_size = cluster_size
+        for label in range(2, num_labels):
+            area = stats[label, cv2.CC_STAT_AREA]
+            if area > largest_area:
+                largest_area = area
                 largest_cluster_label = label
         
-        # Get points in largest cluster
-        largest_cluster_points = points[labels == largest_cluster_label]
+        # Filter out small clusters (less than 50 pixels)
+        if largest_area < 50:
+            return None, None
         
-        return largest_cluster_points, labels
+        # Get points in the largest cluster
+        cluster_mask = (labels == largest_cluster_label)
+        cluster_y, cluster_x = np.where(cluster_mask)
+        
+        # Convert back to original coordinates
+        cluster_points = np.column_stack((cluster_x + min_x, cluster_y + min_y))
+        
+        # Create labels array for compatibility (all points in largest cluster get label 0, others -1)
+        point_labels = np.full(len(points), -1)
+        for i, (px, py) in enumerate(points):
+            if cluster_mask[py - min_y, px - min_x]:
+                point_labels[i] = 0
+        
+        return cluster_points, point_labels
     
     def find_radius_around_iris_center(self, cluster_points, iris_center):
         """Find radius around iris center that encompasses the cluster"""
