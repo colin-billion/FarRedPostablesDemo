@@ -38,10 +38,89 @@ class CleanVideoPupilTracker:
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
+        print(f"OpenCV video properties: frames={self.total_frames}, fps={self.fps}, size={self.width}x{self.height}")
+        
+        # Android-specific fix: If OpenCV fails to read properties, try alternative methods
+        if self.fps <= 0 or self.total_frames <= 0 or self.width <= 0 or self.height <= 0:
+            print("OpenCV failed to read video properties, trying alternative method...")
+            
+            # Try to read a few frames to estimate properties
+            frame_count = 0
+            test_fps = 30.0  # Default assumption
+            detected_width = 0
+            detected_height = 0
+            
+            # Try to read frames to count them and get dimensions
+            # First, try to get just the first frame for dimensions
+            ret, first_frame = self.cap.read()
+            if ret and first_frame is not None:
+                detected_height, detected_width = first_frame.shape[:2]
+                print(f"Detected dimensions from first frame: {detected_width}x{detected_height}")
+                frame_count = 1
+                
+                # Now count remaining frames
+                while True:
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        break
+                    frame_count += 1
+                    if frame_count > 1000:  # Safety limit
+                        break
+                
+                # Reset video capture to beginning
+                self.cap.release()
+                self.cap = cv2.VideoCapture(video_path)
+                if not self.cap.isOpened():
+                    raise ValueError(f"Could not reopen video: {video_path}")
+            else:
+                print("Error: Could not read first frame for dimensions")
+                raise ValueError("Invalid video file - cannot read frames")
+            
+            if frame_count > 0:
+                self.total_frames = frame_count
+                print(f"Estimated frame count: {self.total_frames}")
+            else:
+                print("Error: Could not read any frames from video")
+                raise ValueError("Invalid video file - no frames detected")
+            
+            # Use detected dimensions if available
+            if detected_width > 0 and detected_height > 0:
+                self.width = detected_width
+                self.height = detected_height
+                print(f"Using detected dimensions: {self.width}x{self.height}")
+            else:
+                # Fallback to common mobile video dimensions
+                self.width = 1280
+                self.height = 720
+                print(f"Using fallback dimensions: {self.width}x{self.height}")
+            
+            # Use default FPS if not detected
+            if self.fps <= 0:
+                self.fps = test_fps
+                print(f"Using default FPS: {self.fps}")
+        
+        # Final validation
+        if self.fps <= 0:
+            print(f"Warning: Invalid FPS ({self.fps}), using default 30 FPS")
+            self.fps = 30.0
+        
+        if self.total_frames <= 0:
+            print(f"Error: Invalid frame count ({self.total_frames})")
+            raise ValueError("Invalid video file - no frames detected")
+        
+        if self.width <= 0 or self.height <= 0:
+            print(f"Error: Invalid video dimensions ({self.width}x{self.height})")
+            raise ValueError("Invalid video file - invalid dimensions")
+        
         # Calculate frames to process
         self.frames_to_process = list(range(0, self.total_frames, frame_interval))
         
-        print(f"Video info: {self.total_frames} frames, {self.fps:.2f} FPS, {self.total_frames/self.fps:.2f}s duration")
+        # Calculate duration safely
+        try:
+            duration = self.total_frames / self.fps if self.fps > 0 else 0
+            print(f"Video info: {self.total_frames} frames, {self.fps:.2f} FPS, {duration:.2f}s duration")
+        except ZeroDivisionError:
+            print(f"Video info: {self.total_frames} frames, {self.fps:.2f} FPS, 0.00s duration (FPS error)")
         print(f"Resolution: {self.width}x{self.height}")
         print(f"Processing {len(self.frames_to_process)} frames (every {frame_interval} frame(s))")
         
@@ -380,25 +459,44 @@ class CleanVideoPupilTracker:
     
     def process_video(self):
         """Process the entire video"""
-        frame_idx = 0
-        processed_count = 0
-        failed_count = 0
-        
-        # Detect iris once at the beginning
-        print("Detecting iris from first frame...")
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-        ret, first_frame = self.cap.read()
-        
-        if not ret:
-            print("Error: Could not read first frame")
+        try:
+            frame_idx = 0
+            processed_count = 0
+            failed_count = 0
+            
+            # Detect iris once at the beginning
+            print("Detecting iris from first frame...")
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, first_frame = self.cap.read()
+            
+            if not ret:
+                print("Error: Could not read first frame")
+                return False
+            
+            print(f"First frame shape: {first_frame.shape}")
+            print(f"First frame type: {first_frame.dtype}")
+            print(f"First frame min/max: {first_frame.min()}/{first_frame.max()}")
+            
+            iris_result = self.detect_iris(first_frame)
+            if iris_result is None:
+                print("Error: Could not detect iris in first frame")
+                print("This might be due to:")
+                print("  - Poor lighting conditions")
+                print("  - Eye not clearly visible")
+                print("  - Video quality issues")
+                return False
+            
+            print(f"Fixed iris: center={iris_result['center']}, radius={iris_result['radius']}")
+            
+            # Validate iris detection
+            if iris_result['radius'] <= 0:
+                print("Error: Invalid iris radius detected")
+                return False
+        except Exception as e:
+            print(f"Error in process_video setup: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-        
-        iris_result = self.detect_iris(first_frame)
-        if iris_result is None:
-            print("Error: Could not detect iris in first frame")
-            return False
-        
-        print(f"Fixed iris: center={iris_result['center']}, radius={iris_result['radius']}")
         
         for frame_number in self.frames_to_process:
             # Set frame position
@@ -417,12 +515,35 @@ class CleanVideoPupilTracker:
                 failed_count += 1
                 continue
             
-            # Store tracking data
-            timestamp = frame_number / self.fps
+            # Validate pupil detection
             pupil_radius = pupil_result['radius']
+            if pupil_radius <= 0:
+                print(f"Invalid pupil radius in frame {frame_number}: {pupil_radius}")
+                failed_count += 1
+                continue
+            
+            # Store tracking data with error handling
+            try:
+                timestamp = frame_number / self.fps
+                if not np.isfinite(timestamp):
+                    print(f"Invalid timestamp in frame {frame_number}: {timestamp}")
+                    timestamp = 0.0
+            except ZeroDivisionError:
+                print(f"Zero division error calculating timestamp in frame {frame_number} - FPS: {self.fps}")
+                timestamp = 0.0
+            
             pupil_diameter = pupil_radius * 2
             pupil_area = np.pi * pupil_radius ** 2
-            iris_pupil_ratio = pupil_radius / iris_result['radius']
+            
+            # Calculate iris-pupil ratio with error handling
+            try:
+                iris_pupil_ratio = pupil_radius / iris_result['radius']
+                if not np.isfinite(iris_pupil_ratio):
+                    print(f"Invalid iris-pupil ratio in frame {frame_number}: {iris_pupil_ratio}")
+                    iris_pupil_ratio = 0.0
+            except ZeroDivisionError:
+                print(f"Zero division error in frame {frame_number} - iris radius: {iris_result['radius']}")
+                iris_pupil_ratio = 0.0
             
             self.tracking_data.append({
                 'frame_idx': frame_number,
@@ -445,8 +566,15 @@ class CleanVideoPupilTracker:
             )
             
             # Write to output video
-            if self.video_writer:
-                self.video_writer.write(vis_frame)
+            if self.video_writer and self.video_writer.isOpened():
+                try:
+                    self.video_writer.write(vis_frame)
+                    if frame_number % 30 == 0:  # Every 30 frames
+                        print(f"  Written frame {frame_number} to video")
+                except Exception as e:
+                    print(f"  Error writing frame {frame_number} to video: {e}")
+            elif self.video_writer:
+                print(f"  Video writer not opened, skipping frame {frame_number}")
             
             processed_count += 1
             
@@ -457,7 +585,14 @@ class CleanVideoPupilTracker:
         # Cleanup
         self.cap.release()
         if self.video_writer:
-            self.video_writer.release()
+            print(f"Releasing video writer...")
+            try:
+                self.video_writer.release()
+                print(f"✅ Video writer released successfully")
+            except Exception as e:
+                print(f"❌ Error releasing video writer: {e}")
+        else:
+            print(f"⚠️  No video writer to release")
         
         print(f"\nProcessing complete!")
         print(f"Successfully processed: {processed_count} frames")
