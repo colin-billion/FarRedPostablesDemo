@@ -161,16 +161,18 @@ class PupilTrackingHelper {
             val path = python.getModule("pathlib").callAttr("Path")
             
             // Construct the CSV file path
-            val csvPath = path.callAttr("join", outputDir, videoName, "pupil_data_filtered_${videoName}.csv")
+            val csvPath = os.get("path")?.callAttr("join", outputDir, "pupil_data_filtered_${videoName}.csv")
             
             android.util.Log.d("PupilTrackingHelper", "Loading pupil data from: $csvPath")
             
             // Check if file exists
-            if (!os.callAttr("path", "exists", csvPath).toBoolean()) {
+            val fileExists = os.get("path")?.callAttr("exists", csvPath)?.toBoolean() ?: false
+            if (csvPath == null || !fileExists) {
                 android.util.Log.w("PupilTrackingHelper", "Filtered data not found, trying clean data")
                 // Try the clean data instead
-                val cleanCsvPath = path.callAttr("join", outputDir, videoName, "pupil_data_clean_${videoName}.csv")
-                if (os.callAttr("path", "exists", cleanCsvPath).toBoolean()) {
+                val cleanCsvPath = os.get("path")?.callAttr("join", outputDir, "pupil_data_clean_${videoName}.csv")
+                val cleanFileExists = os.get("path")?.callAttr("exists", cleanCsvPath)?.toBoolean() ?: false
+                if (cleanCsvPath != null && cleanFileExists) {
                     return loadPupilDataFromCsv(pandas, cleanCsvPath.toString())
                 } else {
                     android.util.Log.e("PupilTrackingHelper", "No pupil data files found")
@@ -178,7 +180,12 @@ class PupilTrackingHelper {
                 }
             }
             
-            return loadPupilDataFromCsv(pandas, csvPath.toString())
+            if (csvPath != null) {
+                return loadPupilDataFromCsv(pandas, csvPath.toString())
+            } else {
+                android.util.Log.e("PupilTrackingHelper", "Failed to construct CSV path")
+                return emptyList()
+            }
         } catch (e: Exception) {
             android.util.Log.e("PupilTrackingHelper", "Error loading pupil data: ${e.message}", e)
             return emptyList()
