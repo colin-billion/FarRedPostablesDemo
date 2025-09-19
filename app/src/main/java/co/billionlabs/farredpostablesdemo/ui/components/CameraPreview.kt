@@ -34,6 +34,9 @@ import java.util.concurrent.Executors
 fun CameraPreview(
     onVideoRecorded: (String) -> Unit,
     onRecordingStateChanged: (Boolean) -> Unit = {},
+    useFrontCamera: Boolean = true,
+    onCameraChanged: (Boolean) -> Unit = {},
+    onCameraReady: (Camera?) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -45,6 +48,7 @@ fun CameraPreview(
     var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
     var recording by remember { mutableStateOf<Recording?>(null) }
     var shouldStartRecording by remember { mutableStateOf(false) }
+    var camera by remember { mutableStateOf<Camera?>(null) }
     
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
     
@@ -100,12 +104,40 @@ fun CameraPreview(
             update = { previewView ->
                 // Start camera when preview is ready and camera provider is available
                 if (cameraProvider != null) {
-                    startCamera(context, lifecycleOwner, previewView, cameraProvider!!, cameraExecutor) { videoCap ->
+                    startCamera(context, lifecycleOwner, previewView, cameraProvider!!, cameraExecutor, useFrontCamera) { videoCap, cam ->
                         videoCapture = videoCap
+                        camera = cam
+                        onCameraReady(cam)
                     }
                 }
             }
         )
+        
+        // Camera toggle button (top right)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            contentAlignment = Alignment.TopEnd
+        ) {
+            IconButton(
+                onClick = {
+                    onCameraChanged(!useFrontCamera)
+                },
+                modifier = Modifier
+                    .background(
+                        Color.Black.copy(alpha = 0.5f),
+                        CircleShape
+                    )
+                    .padding(8.dp)
+            ) {
+                Text(
+                    text = if (useFrontCamera) "🔄" else "🔄",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White
+                )
+            }
+        }
         
         // Recording button overlay
         Box(
@@ -178,10 +210,15 @@ private fun startCamera(
     previewView: PreviewView,
     cameraProvider: ProcessCameraProvider,
     cameraExecutor: ExecutorService,
-    onVideoCaptureReady: (VideoCapture<Recorder>) -> Unit
+    useFrontCamera: Boolean,
+    onVideoCaptureReady: (VideoCapture<Recorder>, Camera) -> Unit
 ) {
     val preview = Preview.Builder().build()
-    val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+    val cameraSelector = if (useFrontCamera) {
+        CameraSelector.DEFAULT_FRONT_CAMERA
+    } else {
+        CameraSelector.DEFAULT_BACK_CAMERA
+    }
     
     val recorder = Recorder.Builder()
         .setQualitySelector(QualitySelector.from(Quality.HD))
@@ -190,7 +227,7 @@ private fun startCamera(
     
     try {
         cameraProvider.unbindAll()
-        cameraProvider.bindToLifecycle(
+        val camera = cameraProvider.bindToLifecycle(
             lifecycleOwner,
             cameraSelector,
             preview,
@@ -198,7 +235,7 @@ private fun startCamera(
         )
         
         preview.setSurfaceProvider(previewView.surfaceProvider)
-        onVideoCaptureReady(videoCapture)
+        onVideoCaptureReady(videoCapture, camera)
         
     } catch (exc: Exception) {
         Log.e("CameraPreview", "Use case binding failed", exc)
@@ -254,5 +291,22 @@ private fun createVideoFile(context: Context): File {
         Log.d("CameraPreview", "Created video file: $filePath")
 
         File(filePath)
+    }
+}
+
+// Flash control functions
+fun enableFlash(camera: Camera?) {
+    camera?.let {
+        val cameraControl = it.cameraControl
+        cameraControl.enableTorch(true)
+        Log.d("CameraPreview", "Flash enabled")
+    }
+}
+
+fun disableFlash(camera: Camera?) {
+    camera?.let {
+        val cameraControl = it.cameraControl
+        cameraControl.enableTorch(false)
+        Log.d("CameraPreview", "Flash disabled")
     }
 }

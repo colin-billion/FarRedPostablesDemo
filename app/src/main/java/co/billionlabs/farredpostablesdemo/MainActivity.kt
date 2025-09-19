@@ -23,6 +23,8 @@ import androidx.core.content.ContextCompat
 import co.billionlabs.farredpostablesdemo.ui.theme.FarRedPostablesDemoTheme
 import co.billionlabs.farredpostablesdemo.ui.components.CameraPreview
 import co.billionlabs.farredpostablesdemo.ui.components.PupilDataDialog
+import co.billionlabs.farredpostablesdemo.ui.components.enableFlash
+import co.billionlabs.farredpostablesdemo.ui.components.disableFlash
 import co.billionlabs.farredpostablesdemo.utils.ScreenController
 import co.billionlabs.farredpostablesdemo.utils.PythonHelper
 import co.billionlabs.farredpostablesdemo.utils.PupilTrackingHelper
@@ -141,6 +143,10 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     var isProcessingVideo by remember { mutableStateOf(false) }
     var processingMessage by remember { mutableStateOf("") }
     
+    // Camera states
+    var useFrontCamera by remember { mutableStateOf(true) }
+    var camera by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
+    
     // Initialize screen settings
     LaunchedEffect(Unit) {
         screenController.saveCurrentBrightness()
@@ -158,26 +164,48 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     }
     
     // Handle the brightness/color sequence
-    LaunchedEffect(isInSequence) {
+    LaunchedEffect(isInSequence, useFrontCamera) {
         if (isInSequence) {
-            // Phase 1: 1 second dim red (already set)
-            sequencePhase = "Dim Red (1s)"
-            currentBackgroundColor = Color.Red
-            delay(1000)
-            
-            // Phase 2: 2 seconds bright white
-            sequencePhase = "Bright White (2s)"
-            currentBackgroundColor = Color.White
-            screenController.setMaximumBrightness()
-            screenController.setBackgroundColor(Color.White)
-            delay(2000)
-            
-            // Phase 3: 2 seconds dim red
-            sequencePhase = "Dim Red (2s)"
-            currentBackgroundColor = Color.Red
-            screenController.setMinimumBrightness()
-            screenController.setBackgroundColor(Color.Red)
-            delay(2000)
+            if (useFrontCamera) {
+                // Front camera mode: Use screen lighting
+                // Phase 1: 1 second dim red (already set)
+                sequencePhase = "Dim Red (1s) - Front Camera"
+                currentBackgroundColor = Color.Red
+                delay(1000)
+                
+                // Phase 2: 2 seconds bright white
+                sequencePhase = "Bright White (2s) - Front Camera"
+                currentBackgroundColor = Color.White
+                screenController.setMaximumBrightness()
+                screenController.setBackgroundColor(Color.White)
+                delay(2000)
+                
+                // Phase 3: 2 seconds dim red
+                sequencePhase = "Dim Red (2s) - Front Camera"
+                currentBackgroundColor = Color.Red
+                screenController.setMinimumBrightness()
+                screenController.setBackgroundColor(Color.Red)
+                delay(2000)
+            } else {
+                // Back camera mode: Use flash
+                // Phase 1: 1 second no flash
+                sequencePhase = "No Flash (1s) - Back Camera"
+                currentBackgroundColor = Color.Red
+                disableFlash(camera)
+                delay(1000)
+                
+                // Phase 2: 2 seconds with flash
+                sequencePhase = "Flash On (2s) - Back Camera"
+                currentBackgroundColor = Color.White
+                enableFlash(camera)
+                delay(2000)
+                
+                // Phase 3: 2 seconds no flash
+                sequencePhase = "No Flash (2s) - Back Camera"
+                currentBackgroundColor = Color.Red
+                disableFlash(camera)
+                delay(2000)
+            }
             
             // Reset
             sequencePhase = ""
@@ -203,6 +231,12 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 Text(
                     text = "Pupil Video Recording",
                     style = MaterialTheme.typography.headlineMedium,
+                    color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
+                )
+                
+                Text(
+                    text = if (useFrontCamera) "Front Camera (Screen Light)" else "Back Camera (Flash)",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
                 )
                 
@@ -337,6 +371,15 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                     if (recording) {
                         isInSequence = true
                     }
+                },
+                useFrontCamera = useFrontCamera,
+                onCameraChanged = { newUseFrontCamera ->
+                    useFrontCamera = newUseFrontCamera
+                    Log.d("MainActivity", "Camera switched to: ${if (newUseFrontCamera) "Front" else "Back"}")
+                },
+                onCameraReady = { cam ->
+                    camera = cam
+                    Log.d("MainActivity", "Camera ready: ${if (useFrontCamera) "Front" else "Back"}")
                 },
                 modifier = Modifier.fillMaxSize()
             )
