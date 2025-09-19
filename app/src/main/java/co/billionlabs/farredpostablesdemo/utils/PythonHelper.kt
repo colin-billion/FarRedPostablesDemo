@@ -152,9 +152,9 @@ class PupilTrackingHelper {
      * Get pupil data from the processed results
      * @param outputDir Directory where processing results were saved
      * @param videoName Name of the video file (without extension)
-     * @return Pupil data as a list of maps
+     * @return Map containing pupil data and image path
      */
-    fun getPupilTimeSeries(outputDir: String, videoName: String): List<Map<String, Any>> {
+    fun getPupilTimeSeries(outputDir: String, videoName: String): Map<String, Any> {
         try {
             val pandas = python.getModule("pandas")
             val os = python.getModule("os")
@@ -173,22 +173,41 @@ class PupilTrackingHelper {
                 val cleanCsvPath = os.get("path")?.callAttr("join", outputDir, "pupil_data_clean_${videoName}.csv")
                 val cleanFileExists = os.get("path")?.callAttr("exists", cleanCsvPath)?.toBoolean() ?: false
                 if (cleanCsvPath != null && cleanFileExists) {
-                    return loadPupilDataFromCsv(pandas, cleanCsvPath.toString())
+                    val pupilData = loadPupilDataFromCsv(pandas, cleanCsvPath.toString())
+                    val imagePath = os.get("path")?.callAttr("join", outputDir, "pupil_size_filtered_${videoName}.png")?.toString()
+                    return mapOf(
+                        "pupilData" to pupilData,
+                        "imagePath" to (imagePath ?: "")
+                    )
                 } else {
                     android.util.Log.e("PupilTrackingHelper", "No pupil data files found")
-                    return emptyList()
+                    return mapOf(
+                        "pupilData" to emptyList<Map<String, Any>>(),
+                        "imagePath" to ""
+                    )
                 }
             }
             
             if (csvPath != null) {
-                return loadPupilDataFromCsv(pandas, csvPath.toString())
+                val pupilData = loadPupilDataFromCsv(pandas, csvPath.toString())
+                val imagePath = os.get("path")?.callAttr("join", outputDir, "pupil_size_filtered_${videoName}.png")?.toString()
+                return mapOf(
+                    "pupilData" to pupilData,
+                    "imagePath" to (imagePath ?: "")
+                )
             } else {
                 android.util.Log.e("PupilTrackingHelper", "Failed to construct CSV path")
-                return emptyList()
+                return mapOf(
+                    "pupilData" to emptyList<Map<String, Any>>(),
+                    "imagePath" to ""
+                )
             }
         } catch (e: Exception) {
             android.util.Log.e("PupilTrackingHelper", "Error loading pupil data: ${e.message}", e)
-            return emptyList()
+            return mapOf(
+                "pupilData" to emptyList<Map<String, Any>>(),
+                "imagePath" to ""
+            )
         }
     }
     

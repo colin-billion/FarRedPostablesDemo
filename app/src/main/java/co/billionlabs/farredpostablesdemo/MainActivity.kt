@@ -136,6 +136,7 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     
     // Pupil tracking states
     var pupilData by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
+    var pupilImagePath by remember { mutableStateOf<String?>(null) }
     var showPupilDialog by remember { mutableStateOf(false) }
     var isProcessingVideo by remember { mutableStateOf(false) }
     var processingMessage by remember { mutableStateOf("") }
@@ -314,8 +315,9 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                         processVideoForPupilTracking(
                             path, 
                             pupilHelper!!,
-                            onProcessingComplete = { data ->
+                            onProcessingComplete = { data, imagePath ->
                                 pupilData = data
+                                pupilImagePath = imagePath
                                 showPupilDialog = true
                                 isProcessingVideo = false
                                 processingMessage = ""
@@ -344,9 +346,11 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
         if (showPupilDialog) {
             PupilDataDialog(
                 pupilData = pupilData,
+                imagePath = pupilImagePath,
                 onDismiss = {
                     showPupilDialog = false
                     pupilData = emptyList()
+                    pupilImagePath = null
                 }
             )
         }
@@ -359,7 +363,7 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
 private fun processVideoForPupilTracking(
     videoPath: String,
     pupilHelper: PupilTrackingHelper,
-    onProcessingComplete: (List<Map<String, Any>>) -> Unit = {},
+    onProcessingComplete: (List<Map<String, Any>>, String?) -> Unit = { _, _ -> },
     onProcessingError: (String) -> Unit = {}
 ) {
     // This would be called from a coroutine scope in a real implementation
@@ -377,10 +381,13 @@ private fun processVideoForPupilTracking(
             
             // Get pupil data from the output directory returned by the pipeline
             val outputDir = result["outputDir"]?.toString() ?: videoFile.parent ?: ""
-            val pupilData = pupilHelper.getPupilTimeSeries(outputDir, videoName)
+            val pupilResult = pupilHelper.getPupilTimeSeries(outputDir, videoName)
+            val pupilData = pupilResult["pupilData"] as? List<Map<String, Any>> ?: emptyList()
+            val imagePath = pupilResult["imagePath"] as? String
+            val imagePathOrNull = if (imagePath.isNullOrEmpty()) null else imagePath
             
             Log.d("MainActivity", "Pupil tracking completed, found ${pupilData.size} data points")
-            onProcessingComplete(pupilData)
+            onProcessingComplete(pupilData, imagePathOrNull)
         } else {
             val errorMsg = result["message"]?.toString() ?: "Unknown error"
             Log.e("MainActivity", "Pupil tracking failed: $errorMsg")

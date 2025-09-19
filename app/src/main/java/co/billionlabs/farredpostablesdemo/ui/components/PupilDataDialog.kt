@@ -1,5 +1,6 @@
 package co.billionlabs.farredpostablesdemo.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -9,14 +10,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import android.graphics.BitmapFactory
 import kotlin.math.pow
 
 @Composable
 fun PupilDataDialog(
     pupilData: List<Map<String, Any>>,
+    imagePath: String? = null,
     onDismiss: () -> Unit
 ) {
     if (pupilData.isEmpty()) {
@@ -64,8 +70,13 @@ fun PupilDataDialog(
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                // Statistics
-                PupilStatistics(pupilData = pupilData)
+                // Pupil Size Chart Image
+                if (imagePath != null) {
+                    PupilSizeChart(imagePath = imagePath)
+                } else {
+                    // Fallback to statistics if no image
+                    PupilStatistics(pupilData = pupilData)
+                }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
@@ -91,6 +102,72 @@ fun PupilDataDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Close")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PupilSizeChart(imagePath: String) {
+    val context = LocalContext.current
+    var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    
+    LaunchedEffect(imagePath) {
+        try {
+            val file = java.io.File(imagePath)
+            if (file.exists()) {
+                bitmap = BitmapFactory.decodeFile(imagePath)
+                if (bitmap == null) {
+                    errorMessage = "Failed to load image"
+                }
+            } else {
+                errorMessage = "Image file not found: $imagePath"
+            }
+        } catch (e: Exception) {
+            errorMessage = "Error loading image: ${e.message}"
+        }
+    }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Text(
+                text = "Pupil Size Chart",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            when {
+                bitmap != null -> {
+                    Image(
+                        bitmap = bitmap!!.asImageBitmap(),
+                        contentDescription = "Pupil Size Chart",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                }
+                errorMessage != null -> {
+                    Text(
+                        text = errorMessage!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                else -> {
+                    Text(
+                        text = "Loading chart...",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
         }
