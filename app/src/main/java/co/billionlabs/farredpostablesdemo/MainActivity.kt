@@ -132,6 +132,8 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     var videoPath by remember { mutableStateOf<String?>(null) }
     var isRecording by remember { mutableStateOf(false) }
     var isInSequence by remember { mutableStateOf(false) }
+    var isCountdown by remember { mutableStateOf(false) }
+    var countdownTime by remember { mutableStateOf(5) }
     var currentBackgroundColor by remember { mutableStateOf(Color.Red) }
     var sequencePhase by remember { mutableStateOf("") }
     var pythonTestResult by remember { mutableStateOf<String?>(null) }
@@ -146,12 +148,13 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     // Camera states
     var useFrontCamera by remember { mutableStateOf(true) }
     var camera by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
+    var shouldStartActualRecording by remember { mutableStateOf(false) }
     
     // Handle camera mode changes
     LaunchedEffect(useFrontCamera) {
         if (useFrontCamera) {
-            // Front camera mode: Use minimum brightness for screen lighting control
-            screenController.setMinimumBrightness()
+            // Front camera mode: Start with maximum brightness for visibility
+            screenController.setMaximumBrightness()
         } else {
             // Back camera mode: Use higher brightness for better visibility
             screenController.setMaximumBrightness()
@@ -161,7 +164,8 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     // Initialize screen settings
     LaunchedEffect(Unit) {
         screenController.saveCurrentBrightness()
-        screenController.setMinimumBrightness()
+        // Start with maximum brightness for front camera visibility
+        screenController.setMaximumBrightness()
         screenController.setBackgroundColor(Color.Red)
         screenController.setFullscreen()
     }
@@ -171,6 +175,25 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
         onDispose {
             screenController.restoreOriginalBrightness()
             screenController.exitFullscreen()
+        }
+    }
+    
+    // Handle countdown for front camera
+    LaunchedEffect(isCountdown) {
+        if (isCountdown && useFrontCamera) {
+            // Dim the screen and start countdown
+            screenController.setMinimumBrightness()
+            countdownTime = 5
+            
+            repeat(5) {
+                delay(1000)
+                countdownTime--
+            }
+            
+            // Start the actual recording sequence
+            isCountdown = false
+            isInSequence = true
+            shouldStartActualRecording = true
         }
     }
     
@@ -225,6 +248,7 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
             // Reset
             sequencePhase = ""
             isInSequence = false
+            shouldStartActualRecording = false
         }
     }
     
@@ -285,6 +309,18 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 when {
+                    isCountdown -> {
+                        Text(
+                            text = "Get Ready!",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Recording starts in: $countdownTime",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White
+                        )
+                    }
                     isInSequence -> {
                         Text(
                             text = sequencePhase,
@@ -383,9 +419,6 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 },
                 onRecordingStateChanged = { recording ->
                     isRecording = recording
-                    if (recording) {
-                        isInSequence = true
-                    }
                 },
                 useFrontCamera = useFrontCamera,
                 onCameraChanged = { newUseFrontCamera ->
@@ -395,6 +428,23 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 onCameraReady = { cam ->
                     camera = cam
                     Log.d("MainActivity", "Camera ready: ${if (useFrontCamera) "Front" else "Back"}")
+                },
+                shouldStartActualRecording = shouldStartActualRecording,
+                onRecordButtonPressed = {
+                    Log.d("MainActivity", "Record button pressed")
+                    if (useFrontCamera) {
+                        // Front camera: Start countdown first
+                        isCountdown = true
+                    } else {
+                        // Back camera: Start sequence immediately
+                        isInSequence = true
+                        shouldStartActualRecording = true
+                    }
+                },
+                onRecordingCompleted = {
+                    Log.d("MainActivity", "Recording completed - restoring brightness")
+                    // Restore maximum brightness after recording
+                    screenController.setMaximumBrightness()
                 },
                 modifier = Modifier.fillMaxSize()
             )
