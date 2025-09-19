@@ -3,8 +3,6 @@ package co.billionlabs.farredpostablesdemo.ui.components
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -80,22 +78,6 @@ fun PupilDataDialog(
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                // Data table
-                Text(
-                    text = "Pupil Size Over Time",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                PupilDataTable(
-                    pupilData = pupilData,
-                    modifier = Modifier.weight(1f)
-                )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
                 // Close button
                 Button(
                     onClick = onDismiss,
@@ -152,7 +134,7 @@ private fun PupilSizeChart(imagePath: String) {
                         contentDescription = "Pupil Size Chart",
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(300.dp),
+                            .height(500.dp),
                         contentScale = ContentScale.Fit
                     )
                 }
@@ -248,75 +230,4 @@ private fun StatisticItem(label: String, value: String) {
     }
 }
 
-@Composable
-private fun PupilDataTable(
-    pupilData: List<Map<String, Any>>,
-    modifier: Modifier = Modifier
-) {
-    val scrollState = rememberScrollState()
-    
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                Text("Frame", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                Text("Time (s)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                Text("Pupil Radius", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                Text("Diameter", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-            }
-            
-            // Data rows (show first 50 rows to avoid performance issues)
-            pupilData.take(50).forEach { data ->
-                val frameIdx = data["frame_idx"]?.toString() ?: "N/A"
-                val timestamp = data["timestamp"]?.let { 
-                    if (it is Double) String.format("%.2f", it) else it.toString() 
-                } ?: "N/A"
-                val pupilRadius = data["pupil_radius"]?.let {
-                    if (it is Double) String.format("%.2f", it) else it.toString()
-                } ?: "N/A"
-                val pupilDiameter = data["pupil_diameter"]?.let {
-                    if (it is Double) String.format("%.2f", it) else it.toString()
-                } ?: "N/A"
-                
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            if (data == pupilData.first()) Color.Transparent 
-                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                        )
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    Text(frameIdx, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    Text(timestamp, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    Text(pupilRadius, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    Text(pupilDiameter, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                }
-            }
-            
-            if (pupilData.size > 50) {
-                Text(
-                    text = "... and ${pupilData.size - 50} more rows",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(8.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
 
