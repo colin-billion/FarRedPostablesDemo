@@ -147,6 +147,17 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     var useFrontCamera by remember { mutableStateOf(true) }
     var camera by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
     
+    // Handle camera mode changes
+    LaunchedEffect(useFrontCamera) {
+        if (useFrontCamera) {
+            // Front camera mode: Use minimum brightness for screen lighting control
+            screenController.setMinimumBrightness()
+        } else {
+            // Back camera mode: Use higher brightness for better visibility
+            screenController.setMaximumBrightness()
+        }
+    }
+    
     // Initialize screen settings
     LaunchedEffect(Unit) {
         screenController.saveCurrentBrightness()
@@ -171,40 +182,44 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 // Phase 1: 1 second dim red (already set)
                 sequencePhase = "Dim Red (1s) - Front Camera"
                 currentBackgroundColor = Color.Red
+                screenController.setMinimumBrightness() // Keep minimum for dim red
                 delay(1000)
                 
-                // Phase 2: 2 seconds bright white
-                sequencePhase = "Bright White (2s) - Front Camera"
+                // Phase 2: 1 seconds bright white
+                sequencePhase = "Bright White (1s) - Front Camera"
                 currentBackgroundColor = Color.White
                 screenController.setMaximumBrightness()
                 screenController.setBackgroundColor(Color.White)
-                delay(2000)
+                delay(1000)
                 
-                // Phase 3: 2 seconds dim red
-                sequencePhase = "Dim Red (2s) - Front Camera"
+                // Phase 3: 3 seconds dim red
+                sequencePhase = "Dim Red (3s) - Front Camera"
                 currentBackgroundColor = Color.Red
                 screenController.setMinimumBrightness()
                 screenController.setBackgroundColor(Color.Red)
-                delay(2000)
+                delay(3000)
             } else {
-                // Back camera mode: Use flash
-                // Phase 1: 1 second no flash
+                // Back camera mode: Use flash with high screen brightness
+                // Phase 1: 1 second no flash (keep high brightness)
                 sequencePhase = "No Flash (1s) - Back Camera"
                 currentBackgroundColor = Color.Red
+                screenController.setMaximumBrightness() // Keep high brightness for visibility
                 disableFlash(camera)
                 delay(1000)
                 
-                // Phase 2: 2 seconds with flash
-                sequencePhase = "Flash On (2s) - Back Camera"
+                // Phase 2: 1 seconds with flash
+                sequencePhase = "Flash On (1s) - Back Camera"
                 currentBackgroundColor = Color.White
+                screenController.setMaximumBrightness() // Keep high brightness
                 enableFlash(camera)
-                delay(2000)
+                delay(1000)
                 
-                // Phase 3: 2 seconds no flash
-                sequencePhase = "No Flash (2s) - Back Camera"
+                // Phase 3: 3 seconds no flash
+                sequencePhase = "No Flash (3s) - Back Camera"
                 currentBackgroundColor = Color.Red
+                screenController.setMaximumBrightness() // Keep high brightness
                 disableFlash(camera)
-                delay(2000)
+                delay(3000)
             }
             
             // Reset
@@ -235,7 +250,7 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 )
                 
                 Text(
-                    text = if (useFrontCamera) "Front Camera (Screen Light)" else "Back Camera (Flash)",
+                    text = if (useFrontCamera) "Front Camera (Screen Light)" else "Back Camera (Flash + Bright Screen)",
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
                 )
