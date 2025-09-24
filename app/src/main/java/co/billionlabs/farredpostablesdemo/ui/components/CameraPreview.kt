@@ -58,6 +58,12 @@ fun CameraPreview(
     
     DisposableEffect(Unit) {
         onDispose {
+            // Ensure recording state is reset when component is disposed
+            if (isRecording) {
+                isRecording = false
+                recordingTime = 0
+                onRecordingStateChanged(false)
+            }
             cameraExecutor.shutdown()
         }
     }
@@ -86,11 +92,24 @@ fun CameraPreview(
             }
             
             // Stop recording after 5 seconds
+            // Reset recording state immediately to prevent UI getting stuck
+            isRecording = false
+            recordingTime = 0
+            onRecordingStateChanged(false)
+            
+            // Stop the actual recording
             stopRecording(recording) {
+                onRecordingCompleted()
+            }
+            
+            // Safety timeout: Force reset recording state after 2 additional seconds
+            // This prevents the app from getting stuck if recording doesn't stop properly
+            delay(2000)
+            if (isRecording) {
+                android.util.Log.w("CameraPreview", "Safety timeout: Forcing recording state reset")
                 isRecording = false
                 recordingTime = 0
                 onRecordingStateChanged(false)
-                onRecordingCompleted()
             }
         }
     }
@@ -100,6 +119,17 @@ fun CameraPreview(
         if (!shouldStartActualRecording) {
             hasProcessedRecording = false
         }
+    }
+    
+    // Reset recording state when camera changes
+    LaunchedEffect(useFrontCamera) {
+        if (isRecording) {
+            android.util.Log.d("CameraPreview", "Camera changed during recording - resetting state")
+            isRecording = false
+            recordingTime = 0
+            onRecordingStateChanged(false)
+        }
+        hasProcessedRecording = false
     }
     
     // Initialize camera when component is first created

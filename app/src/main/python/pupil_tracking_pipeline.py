@@ -53,6 +53,53 @@ class PupilTrackingPipeline:
         print(f"   Output: {self.output_dir}")
         print(f"   Frame interval: {frame_interval}")
     
+    def check_video_orientation(self):
+        """Check video orientation and print dimension info for debugging"""
+        import cv2
+        
+        # Open video to check dimensions
+        cap = cv2.VideoCapture(self.video_path)
+        if not cap.isOpened():
+            print("❌ Could not open video for orientation check")
+            return
+        
+        # Get OpenCV reported dimensions
+        reported_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        reported_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        # Read first frame to get actual dimensions
+        ret, frame = cap.read()
+        if ret and frame is not None:
+            actual_height, actual_width = frame.shape[:2]
+            
+            print(f"📐 Video dimension check:")
+            print(f"   OpenCV reported: {reported_width}x{reported_height} (width x height)")
+            print(f"   Actual frame: {actual_width}x{actual_height} (width x height)")
+            
+            if actual_width != reported_width or actual_height != reported_height:
+                print(f"⚠️  Dimension mismatch detected!")
+                print(f"   This may cause iris detection issues.")
+                print(f"   Consider rotating the video or adjusting detection parameters.")
+            else:
+                print(f"✅ Dimensions match - no rotation issues detected")
+            
+            # Check if iris detection parameters might be too restrictive
+            min_dimension = min(actual_width, actual_height)
+            print(f"📏 Iris detection parameter analysis:")
+            print(f"   Video dimensions: {actual_width}x{actual_height}")
+            print(f"   Current minRadius=120, maxRadius=250, minDist=150")
+            print(f"   Min dimension: {min_dimension}")
+            
+            if min_dimension < 800:
+                print(f"⚠️  Video has small dimensions - iris detection may fail")
+                print(f"   Consider using smaller detection parameters")
+            elif min_dimension > 1000:
+                print(f"ℹ️  Video has large dimensions - current parameters should work")
+        else:
+            print("❌ Could not read first frame for dimension check")
+        
+        cap.release()
+    
     def run_tracking(self):
         """Run the pupil tracking phase"""
         print(f"\n{'='*60}")
@@ -62,6 +109,9 @@ class PupilTrackingPipeline:
         start_time = time.time()
         
         try:
+            # Check video orientation and dimensions before initializing tracker
+            self.check_video_orientation()
+            
             # Initialize tracker
             tracker = CleanVideoPupilTracker(
                 self.video_path,

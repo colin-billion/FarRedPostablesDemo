@@ -168,11 +168,11 @@ class CleanVideoPupilTracker:
             enhanced,
             cv2.HOUGH_GRADIENT,
             dp=1,
-            minDist=150,
+            minDist=50,
             param1=50,
             param2=40,
-            minRadius=120,
-            maxRadius=250
+            minRadius=30,
+            maxRadius=150
         )
         
         if circles is None:
