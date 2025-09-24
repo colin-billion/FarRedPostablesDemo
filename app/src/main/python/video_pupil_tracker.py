@@ -145,57 +145,331 @@ class CleanVideoPupilTracker:
         
         print(f"Will create output video: {output_video_path}")
     
-    def detect_iris(self, image):
-        """Detect iris using the working method from debug script"""
-        # Preprocess for iris detection
+    def detect_iris_median_blur(self, image, debug=False):
+        """Detect iris using median blurred image with custom parameters: radius 40-150"""
+        if debug:
+            print(f"\n🔍 IRIS DETECTION (MEDIAN BLURRED)")
+            print(f"   Input image shape: {image.shape}")
+            print(f"   Input image type: {image.dtype}")
+            print(f"   Input image range: {image.min()}-{image.max()}")
+        
+        # Convert to grayscale
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
             gray = image.copy()
         
-        # Apply median blur to reduce noise
+        if debug:
+            print(f"   Grayscale shape: {gray.shape}, range: {gray.min()}-{gray.max()}")
+        
+        # Apply median blur for noise reduction
         blurred = cv2.medianBlur(gray, 5)
+        if debug:
+            print(f"   After median blur: range {blurred.min()}-{blurred.max()}")
         
-        # Apply CLAHE for local contrast enhancement
-        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(blurred)
+        # Save debug image
+        if debug:
+            self.save_debug_image(blurred, "iris_median_blur_preprocessed")
         
-        # Apply additional contrast enhancement
-        enhanced = cv2.convertScaleAbs(enhanced, alpha=3.0, beta=50)
-        
-        # Find Hough circles
+        # Find Hough circles with custom parameters
+        if debug:
+            print(f"   HoughCircles parameters: minDist=50, param1=50, param2=30, minRadius=40, maxRadius=150")
         circles = cv2.HoughCircles(
-            enhanced,
+            blurred,
             cv2.HOUGH_GRADIENT,
             dp=1,
-            minDist=50,
+            minDist=50,   # Smaller minimum distance since only one eye
             param1=50,
-            param2=40,
-            minRadius=30,
-            maxRadius=150
+            param2=30,    # Lower threshold for more sensitive detection
+            minRadius=40, # User-specified minimum radius
+            maxRadius=150 # User-specified maximum radius
         )
         
         if circles is None:
+            if debug:
+                print(f"❌ No circles detected by HoughCircles on median blurred image")
             return None
         
         circles = np.round(circles[0, :]).astype("int")
+        if debug:
+            print(f"✅ Found {len(circles)} potential iris circles on median blurred image")
+            # Create debug visualization of all detected circles
+            self.create_iris_debug_visualization(blurred, circles, "iris_median_blur_all_circles")
         
         # Score each circle based on intensity differences
         best_circle = None
         best_score = -float('inf')
         
-        for circle in circles:
+        if debug:
+            print(f"   Scoring circles:")
+        for i, circle in enumerate(circles):
             x, y, r = circle
-            score = self.score_iris_circle(enhanced, x, y, r)
+            score = self.score_iris_circle(blurred, x, y, r)
+            if debug:
+                print(f"     Circle {i+1}: center=({x},{y}), radius={r}, score={score:.2f}")
             
             if score > best_score:
                 best_score = score
                 best_circle = circle
         
         if best_circle is None:
+            if debug:
+                print(f"❌ No valid iris circle found (all scores too low)")
             return None
         
         x, y, r = best_circle
+        if debug:
+            print(f"✅ Best iris: center=({x},{y}), radius={r}, score={best_score:.2f}")
+            # Create final debug visualization
+            self.create_iris_debug_visualization(blurred, [best_circle], "iris_median_blur_best_circle")
+        
+        return {
+            'center': (x, y),
+            'radius': r,
+            'score': best_score
+        }
+    
+    def detect_iris_custom(self, image, debug=False):
+        """Detect iris using custom parameters: radius 40-200, single eye"""
+        if debug:
+            print(f"\n🔍 IRIS DETECTION (CUSTOM PARAMETERS)")
+            print(f"   Input image shape: {image.shape}")
+            print(f"   Input image type: {image.dtype}")
+            print(f"   Input image range: {image.min()}-{image.max()}")
+        
+        # Minimal preprocessing - just convert to grayscale
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        if debug:
+            print(f"   Grayscale shape: {gray.shape}, range: {gray.min()}-{gray.max()}")
+        
+        # Apply only median blur for noise reduction
+        blurred = cv2.medianBlur(gray, 5)
+        if debug:
+            print(f"   After median blur: range {blurred.min()}-{blurred.max()}")
+        
+        # Save debug image
+        if debug:
+            self.save_debug_image(blurred, "iris_custom_preprocessed")
+        
+        # Find Hough circles with custom parameters
+        if debug:
+            print(f"   HoughCircles parameters: minDist=50, param1=50, param2=30, minRadius=40, maxRadius=200")
+        circles = cv2.HoughCircles(
+            blurred,
+            cv2.HOUGH_GRADIENT,
+            dp=1,
+            minDist=50,   # Smaller minimum distance since only one eye
+            param1=50,
+            param2=30,    # Lower threshold for more sensitive detection
+            minRadius=40, # User-specified minimum radius
+            maxRadius=200 # User-specified maximum radius
+        )
+        
+        if circles is None:
+            if debug:
+                print(f"❌ No circles detected by HoughCircles with custom parameters")
+            return None
+        
+        circles = np.round(circles[0, :]).astype("int")
+        if debug:
+            print(f"✅ Found {len(circles)} potential iris circles with custom parameters")
+            # Create debug visualization of all detected circles
+            self.create_iris_debug_visualization(blurred, circles, "iris_custom_all_circles")
+        
+        # Score each circle based on intensity differences
+        best_circle = None
+        best_score = -float('inf')
+        
+        if debug:
+            print(f"   Scoring circles:")
+        for i, circle in enumerate(circles):
+            x, y, r = circle
+            score = self.score_iris_circle(blurred, x, y, r)
+            if debug:
+                print(f"     Circle {i+1}: center=({x},{y}), radius={r}, score={score:.2f}")
+            
+            if score > best_score:
+                best_score = score
+                best_circle = circle
+        
+        if best_circle is None:
+            if debug:
+                print(f"❌ No valid iris circle found (all scores too low)")
+            return None
+        
+        x, y, r = best_circle
+        if debug:
+            print(f"✅ Best iris: center=({x},{y}), radius={r}, score={best_score:.2f}")
+            # Create final debug visualization
+            self.create_iris_debug_visualization(blurred, [best_circle], "iris_custom_best_circle")
+        
+        return {
+            'center': (x, y),
+            'radius': r,
+            'score': best_score
+        }
+    
+    def detect_iris_original(self, image, debug=False):
+        """Detect iris using original image with minimal preprocessing"""
+        if debug:
+            print(f"\n🔍 IRIS DETECTION (ORIGINAL IMAGE)")
+            print(f"   Input image shape: {image.shape}")
+            print(f"   Input image type: {image.dtype}")
+            print(f"   Input image range: {image.min()}-{image.max()}")
+        
+        # Minimal preprocessing - just convert to grayscale
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        if debug:
+            print(f"   Grayscale shape: {gray.shape}, range: {gray.min()}-{gray.max()}")
+        
+        # Apply only median blur for noise reduction
+        blurred = cv2.medianBlur(gray, 5)
+        if debug:
+            print(f"   After median blur: range {blurred.min()}-{blurred.max()}")
+        
+        # Save debug image
+        if debug:
+            self.save_debug_image(blurred, "iris_original_preprocessed")
+        
+        # Find Hough circles on original image
+        if debug:
+            print(f"   HoughCircles parameters: minDist=100, param1=50, param2=30, minRadius=80, maxRadius=200")
+        circles = cv2.HoughCircles(
+            blurred,
+            cv2.HOUGH_GRADIENT,
+            dp=1,
+            minDist=100,  # Larger minimum distance for iris
+            param1=50,
+            param2=30,    # Lower threshold for more sensitive detection
+            minRadius=80, # Larger minimum radius for iris
+            maxRadius=200 # Larger maximum radius for iris
+        )
+        
+        if circles is None:
+            if debug:
+                print(f"❌ No circles detected by HoughCircles on original image")
+            return None
+        
+        circles = np.round(circles[0, :]).astype("int")
+        if debug:
+            print(f"✅ Found {len(circles)} potential iris circles on original image")
+            # Create debug visualization of all detected circles
+            self.create_iris_debug_visualization(blurred, circles, "iris_original_all_circles")
+        
+        # Score each circle based on intensity differences
+        best_circle = None
+        best_score = -float('inf')
+        
+        if debug:
+            print(f"   Scoring circles:")
+        for i, circle in enumerate(circles):
+            x, y, r = circle
+            score = self.score_iris_circle(blurred, x, y, r)
+            if debug:
+                print(f"     Circle {i+1}: center=({x},{y}), radius={r}, score={score:.2f}")
+            
+            if score > best_score:
+                best_score = score
+                best_circle = circle
+        
+        if best_circle is None:
+            if debug:
+                print(f"❌ No valid iris circle found (all scores too low)")
+            return None
+        
+        x, y, r = best_circle
+        if debug:
+            print(f"✅ Best iris: center=({x},{y}), radius={r}, score={best_score:.2f}")
+            # Create final debug visualization
+            self.create_iris_debug_visualization(blurred, [best_circle], "iris_original_best_circle")
+        
+        return {
+            'center': (x, y),
+            'radius': r,
+            'score': best_score
+        }
+    
+    def detect_iris_with_debug(self, image, frame_number, last_good_iris=None):
+        """Detect iris with additional debugging for jumps"""
+        current_iris = self.detect_iris(image, debug=False)
+        
+        if current_iris is not None and last_good_iris is not None:
+            # Calculate position change
+            center_distance = np.sqrt((current_iris['center'][0] - last_good_iris['center'][0])**2 + 
+                                    (current_iris['center'][1] - last_good_iris['center'][1])**2)
+            
+            # If there's a big jump, save debug info
+            if center_distance > 50:
+                print(f"⚠️  BIG JUMP detected at frame {frame_number}:")
+                print(f"   Last good: center={last_good_iris['center']}, radius={last_good_iris['radius']}")
+                print(f"   Current:   center={current_iris['center']}, radius={current_iris['radius']}")
+                print(f"   Distance:  {center_distance:.1f} pixels")
+                
+                # Save debug frame
+                debug_frame = image.copy()
+                cv2.circle(debug_frame, last_good_iris['center'], last_good_iris['radius'], (0, 255, 0), 2)
+                cv2.circle(debug_frame, current_iris['center'], current_iris['radius'], (0, 0, 255), 2)
+                cv2.putText(debug_frame, f"Frame {frame_number} - JUMP", (10, 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                cv2.imwrite(f"/Users/avafascetti/Desktop/debug_jump_frame_{frame_number}.png", debug_frame)
+                print(f"   Debug frame saved: debug_jump_frame_{frame_number}.png")
+        
+        return current_iris
+
+    def detect_iris(self, image, debug=False):
+        """Detect iris using the working method from debug script"""
+        # Preprocess for iris detection (using same method as successful debug script)
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        # Use histogram equalization + median blur (same as debug script)
+        enhanced = cv2.equalizeHist(gray)          # contrast enhancement
+        enhanced = cv2.medianBlur(enhanced, 5)     # reduce noise, preserve edges
+        
+        # Find Hough circles using Conservative parameters (found to work well)
+        circles = cv2.HoughCircles(
+            enhanced,
+            cv2.HOUGH_GRADIENT,
+            dp=1.5,
+            minDist=120,
+            param1=150,
+            param2=40,
+            minRadius=80,
+            maxRadius=300
+        )
+        
+        if circles is None:
+            return None
+
+        circles = np.round(circles[0, :]).astype("int")
+
+        # Score each circle based on intensity differences
+        best_circle = None
+        best_score = -float('inf')
+
+        for i, circle in enumerate(circles):
+            x, y, r = circle
+            score = self.score_iris_circle(enhanced, x, y, r)
+
+            if score > best_score:
+                best_score = score
+                best_circle = circle
+
+        if best_circle is None:
+            return None
+
+        x, y, r = best_circle
+        
         return {
             'center': (x, y),
             'radius': r,
@@ -210,17 +484,27 @@ class CleanVideoPupilTracker:
         if x - r < 0 or x + r >= w or y - r < 0 or y + r >= h:
             return -float('inf')
         
+        # Ensure radius is large enough for meaningful scoring
+        if r < 20:
+            return -float('inf')
+        
         # Create masks for inner and outer rings
         inner_mask = np.zeros((h, w), dtype=np.uint8)
         outer_mask = np.zeros((h, w), dtype=np.uint8)
         
-        # Inner ring (iris area)
-        cv2.circle(inner_mask, (x, y), r - 5, 255, -1)
-        cv2.circle(inner_mask, (x, y), r - 15, 0, -1)
+        # Inner ring (iris area) - ensure inner radius is positive
+        inner_outer_r = max(1, r - 5)
+        inner_inner_r = max(1, r - 15)
+        cv2.circle(inner_mask, (x, y), inner_outer_r, 255, -1)
+        if inner_inner_r < inner_outer_r:
+            cv2.circle(inner_mask, (x, y), inner_inner_r, 0, -1)
         
-        # Outer ring (sclera area)
-        cv2.circle(outer_mask, (x, y), r + 5, 255, -1)
-        cv2.circle(outer_mask, (x, y), r - 5, 0, -1)
+        # Outer ring (sclera area) - ensure outer radius is within bounds
+        outer_outer_r = min(w//2, h//2, r + 5)
+        outer_inner_r = max(1, r - 5)
+        cv2.circle(outer_mask, (x, y), outer_outer_r, 255, -1)
+        if outer_inner_r < outer_outer_r:
+            cv2.circle(outer_mask, (x, y), outer_inner_r, 0, -1)
         
         # Calculate mean intensities
         inner_intensity = cv2.mean(image, inner_mask)[0]
@@ -238,6 +522,496 @@ class CleanVideoPupilTracker:
         score = 0.7 * intensity_diff + 0.15 * consistency
         
         return score
+    
+    def save_debug_image(self, image, name):
+        """Save debug image to output directory"""
+        try:
+            debug_path = os.path.join(self.output_dir, f"debug_{name}.png")
+            cv2.imwrite(debug_path, image)
+            print(f"   💾 Saved debug image: {debug_path}")
+        except Exception as e:
+            print(f"   ❌ Failed to save debug image {name}: {e}")
+    
+    def create_preprocessing_comparison(self, original, gray, blurred, clahe_result, enhanced):
+        """Create side-by-side comparison of all preprocessing steps"""
+        try:
+            # Ensure all images are the same size and type
+            h, w = gray.shape
+            
+            # Resize original to match grayscale if needed
+            if len(original.shape) == 3:
+                original_resized = cv2.resize(original, (w, h))
+            else:
+                original_resized = original
+            
+            # Convert grayscale images to 3-channel for display
+            gray_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            blurred_bgr = cv2.cvtColor(blurred, cv2.COLOR_GRAY2BGR)
+            clahe_bgr = cv2.cvtColor(clahe_result, cv2.COLOR_GRAY2BGR)
+            enhanced_bgr = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+            
+            # Create a large comparison image (2x3 grid)
+            # Each image will be 400x300 for good visibility
+            target_size = (400, 300)
+            
+            # Resize all images
+            img1 = cv2.resize(original_resized, target_size)
+            img2 = cv2.resize(gray_bgr, target_size)
+            img3 = cv2.resize(blurred_bgr, target_size)
+            img4 = cv2.resize(clahe_bgr, target_size)
+            img5 = cv2.resize(enhanced_bgr, target_size)
+            
+            # Create a 6th image showing the difference between original and enhanced
+            diff = cv2.absdiff(original_resized, enhanced_bgr)
+            diff_bgr = cv2.cvtColor(diff, cv2.COLOR_GRAY2BGR) if len(diff.shape) == 2 else diff
+            img6 = cv2.resize(diff_bgr, target_size)
+            
+            # Create the comparison grid
+            # Top row: Original, Grayscale, Blurred
+            top_row = np.hstack([img1, img2, img3])
+            # Bottom row: CLAHE, Enhanced, Difference
+            bottom_row = np.hstack([img4, img5, img6])
+            comparison = np.vstack([top_row, bottom_row])
+            
+            # Add labels
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.7
+            thickness = 2
+            color = (255, 255, 255)
+            
+            # Add labels to each section
+            cv2.putText(comparison, "1. Original", (10, 30), font, font_scale, color, thickness)
+            cv2.putText(comparison, "2. Grayscale", (410, 30), font, font_scale, color, thickness)
+            cv2.putText(comparison, "3. Median Blur", (810, 30), font, font_scale, color, thickness)
+            cv2.putText(comparison, "4. CLAHE", (10, 330), font, font_scale, color, thickness)
+            cv2.putText(comparison, "5. Enhanced", (410, 330), font, font_scale, color, thickness)
+            cv2.putText(comparison, "6. Difference", (810, 330), font, font_scale, color, thickness)
+            
+            # Add range information
+            cv2.putText(comparison, f"Range: {gray.min()}-{gray.max()}", (10, 60), font, 0.5, color, 1)
+            cv2.putText(comparison, f"Range: {blurred.min()}-{blurred.max()}", (410, 60), font, 0.5, color, 1)
+            cv2.putText(comparison, f"Range: {clahe_result.min()}-{clahe_result.max()}", (10, 360), font, 0.5, color, 1)
+            cv2.putText(comparison, f"Range: {enhanced.min()}-{enhanced.max()}", (410, 360), font, 0.5, color, 1)
+            
+            # Save comparison
+            debug_path = os.path.join(self.output_dir, "debug_preprocessing_comparison.png")
+            cv2.imwrite(debug_path, comparison)
+            print(f"   💾 Saved preprocessing comparison: {debug_path}")
+            
+        except Exception as e:
+            print(f"   ❌ Failed to create preprocessing comparison: {e}")
+    
+    def create_iris_debug_visualization(self, image, circles, name):
+        """Create debug visualization of iris circles"""
+        try:
+            # Create a copy of the image for visualization
+            vis_image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            
+            # Draw all circles
+            for i, circle in enumerate(circles):
+                x, y, r = circle
+                color = (0, 255, 0) if i == 0 else (0, 255, 255)  # Green for first, yellow for others
+                cv2.circle(vis_image, (x, y), r, color, 2)
+                cv2.circle(vis_image, (x, y), 3, color, -1)
+                cv2.putText(vis_image, f"{i+1}", (x+5, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            
+            # Save debug visualization
+            debug_path = os.path.join(self.output_dir, f"debug_{name}.png")
+            cv2.imwrite(debug_path, vis_image)
+            print(f"   💾 Saved debug visualization: {debug_path}")
+        except Exception as e:
+            print(f"   ❌ Failed to create debug visualization {name}: {e}")
+    
+    def create_comprehensive_iris_debug(self, image, debug=False):
+        """Create comprehensive debug visualization for iris detection"""
+        import matplotlib.pyplot as plt
+        
+        if debug:
+            print(f"\n🔍 COMPREHENSIVE IRIS DETECTION DEBUG")
+            print(f"   Input image shape: {image.shape}")
+            print(f"   Input image type: {image.dtype}")
+            print(f"   Input image range: {image.min()}-{image.max()}")
+        
+        # Convert to grayscale
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        # Create different preprocessing versions
+        preprocessed_versions = {}
+        
+        # 1. Original grayscale
+        preprocessed_versions['Original'] = gray
+        
+        # 2. Median blur only
+        preprocessed_versions['Median Blur'] = cv2.medianBlur(gray, 5)
+        
+        # 3. Gaussian blur
+        preprocessed_versions['Gaussian Blur'] = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        # 4. CLAHE only (less aggressive)
+        clahe_mild = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        preprocessed_versions['CLAHE Mild'] = clahe_mild.apply(gray)
+        
+        # 5. CLAHE moderate
+        clahe_moderate = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
+        preprocessed_versions['CLAHE Moderate'] = clahe_moderate.apply(gray)
+        
+        # 6. CLAHE aggressive
+        clahe_aggressive = cv2.createCLAHE(clipLimit=8.0, tileGridSize=(8, 8))
+        preprocessed_versions['CLAHE Aggressive'] = clahe_aggressive.apply(gray)
+        
+        # 7. Edge detection (Canny)
+        edges = cv2.Canny(gray, 50, 150)
+        preprocessed_versions['Canny Edges'] = edges
+        
+        # 8. Morphological operations
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        morph = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel)
+        preprocessed_versions['Morphological'] = morph
+        
+        # 9. Histogram equalization
+        hist_eq = cv2.equalizeHist(gray)
+        preprocessed_versions['Histogram Eq'] = hist_eq
+        
+        # 10. Current enhanced method
+        blurred = cv2.medianBlur(gray, 5)
+        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(blurred)
+        enhanced = cv2.convertScaleAbs(enhanced, alpha=3.0, beta=50)
+        preprocessed_versions['Current Enhanced'] = enhanced
+        
+        # Test different Hough circle parameter sets
+        hough_params = [
+            {'name': 'Conservative', 'minDist': 100, 'param1': 50, 'param2': 30, 'minRadius': 80, 'maxRadius': 200},
+            {'name': 'Moderate', 'minDist': 50, 'param1': 50, 'param2': 30, 'minRadius': 40, 'maxRadius': 150},
+            {'name': 'Sensitive', 'minDist': 30, 'param1': 30, 'param2': 20, 'minRadius': 30, 'maxRadius': 120},
+            {'name': 'Very Sensitive', 'minDist': 20, 'param1': 20, 'param2': 15, 'minRadius': 20, 'maxRadius': 100},
+            {'name': 'Large Only', 'minDist': 80, 'param1': 50, 'param2': 25, 'minRadius': 60, 'maxRadius': 180},
+            {'name': 'Small Only', 'minDist': 30, 'param1': 40, 'param2': 20, 'minRadius': 20, 'maxRadius': 80}
+        ]
+        
+        # Create comprehensive visualization
+        fig, axes = plt.subplots(4, 6, figsize=(24, 16))
+        fig.suptitle('Comprehensive Iris Detection Debug - Preprocessing + Hough Circles', fontsize=16)
+        
+        row = 0
+        col = 0
+        
+        for prep_name, prep_image in preprocessed_versions.items():
+            if row >= 4:
+                break
+                
+            # Show preprocessing result
+            if prep_name == 'Canny Edges':
+                axes[row, col].imshow(prep_image, cmap='gray')
+            else:
+                axes[row, col].imshow(prep_image, cmap='gray')
+            axes[row, col].set_title(f'{prep_name}\nRange: {prep_image.min()}-{prep_image.max()}')
+            axes[row, col].axis('off')
+            
+            # Test Hough circles on this preprocessing
+            circles_found = []
+            for params in hough_params:
+                circles = cv2.HoughCircles(
+                    prep_image,
+                    cv2.HOUGH_GRADIENT,
+                    dp=1,
+                    minDist=params['minDist'],
+                    param1=params['param1'],
+                    param2=params['param2'],
+                    minRadius=params['minRadius'],
+                    maxRadius=params['maxRadius']
+                )
+                
+                if circles is not None:
+                    circles = np.round(circles[0, :]).astype("int")
+                    circles_found.extend([(params['name'], circles)])
+            
+            # Draw circles on the image
+            result_image = prep_image.copy()
+            if len(result_image.shape) == 2:
+                result_image = cv2.cvtColor(result_image, cv2.COLOR_GRAY2BGR)
+            
+            colors = [(0, 255, 0), (255, 0, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
+            
+            for i, (param_name, circles) in enumerate(circles_found):
+                color = colors[i % len(colors)]
+                for circle in circles:
+                    x, y, r = circle
+                    cv2.circle(result_image, (x, y), r, color, 2)
+                    cv2.putText(result_image, f"{param_name[:3]}", (x-10, y-10), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            
+            # Show result with circles
+            axes[row, col+1].imshow(cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB))
+            axes[row, col+1].set_title(f'{prep_name} + Circles\nFound: {len(circles_found)} param sets')
+            axes[row, col+1].axis('off')
+            
+            col += 2
+            if col >= 6:
+                col = 0
+                row += 1
+        
+        # Fill remaining empty subplots
+        while row < 4:
+            while col < 6:
+                axes[row, col].axis('off')
+                col += 1
+            col = 0
+            row += 1
+        
+        plt.tight_layout()
+        
+        # Save the comprehensive debug
+        debug_path = os.path.join(self.output_dir, "debug_comprehensive_iris_detection.png")
+        plt.savefig(debug_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        if debug:
+            print(f"💾 Saved comprehensive iris debug: {debug_path}")
+        
+        return debug_path
+    
+    def create_detailed_parameter_debug(self, image, debug=False):
+        """Create detailed debug visualization for different Hough circle parameters on median blurred image"""
+        import matplotlib.pyplot as plt
+        
+        if debug:
+            print(f"\n🔍 DETAILED PARAMETER DEBUG")
+            print(f"   Input image shape: {image.shape}")
+            print(f"   Input image type: {image.dtype}")
+            print(f"   Input image range: {image.min()}-{image.max()}")
+        
+        # Convert to grayscale and apply median blur
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        blurred = cv2.medianBlur(gray, 5)
+        
+        if debug:
+            print(f"   Median blurred image range: {blurred.min()}-{blurred.max()}")
+        
+        # Test different Hough circle parameter sets
+        hough_params = [
+            {'name': 'Conservative', 'minDist': 100, 'param1': 50, 'param2': 30, 'minRadius': 80, 'maxRadius': 200},
+            {'name': 'Moderate', 'minDist': 50, 'param1': 50, 'param2': 30, 'minRadius': 40, 'maxRadius': 150},
+            {'name': 'Sensitive', 'minDist': 30, 'param1': 30, 'param2': 20, 'minRadius': 30, 'maxRadius': 120},
+            {'name': 'Very Sensitive', 'minDist': 20, 'param1': 20, 'param2': 15, 'minRadius': 20, 'maxRadius': 100},
+            {'name': 'Large Only', 'minDist': 80, 'param1': 50, 'param2': 25, 'minRadius': 60, 'maxRadius': 180},
+            {'name': 'Small Only', 'minDist': 30, 'param1': 40, 'param2': 20, 'minRadius': 20, 'maxRadius': 80},
+            {'name': 'Ultra Sensitive', 'minDist': 10, 'param1': 10, 'param2': 10, 'minRadius': 10, 'maxRadius': 150},
+            {'name': 'Edge Focus', 'minDist': 40, 'param1': 100, 'param2': 20, 'minRadius': 30, 'maxRadius': 120}
+        ]
+        
+        # Create detailed visualization
+        fig, axes = plt.subplots(3, 3, figsize=(18, 18))
+        fig.suptitle('Detailed Hough Circle Parameter Testing on Median Blurred Image', fontsize=16)
+        
+        # Show original median blurred image in top-left
+        axes[0, 0].imshow(blurred, cmap='gray')
+        axes[0, 0].set_title('Median Blurred Image\n(Input for all tests)')
+        axes[0, 0].axis('off')
+        
+        # Test each parameter set
+        for i, params in enumerate(hough_params):
+            row = (i + 1) // 3
+            col = (i + 1) % 3
+            
+            if row >= 3:
+                break
+            
+            # Test Hough circles with these parameters
+            circles = cv2.HoughCircles(
+                blurred,
+                cv2.HOUGH_GRADIENT,
+                dp=1,
+                minDist=params['minDist'],
+                param1=params['param1'],
+                param2=params['param2'],
+                minRadius=params['minRadius'],
+                maxRadius=params['maxRadius']
+            )
+            
+            # Create result image
+            result_image = blurred.copy()
+            if len(result_image.shape) == 2:
+                result_image = cv2.cvtColor(result_image, cv2.COLOR_GRAY2BGR)
+            
+            circles_found = 0
+            if circles is not None:
+                circles = np.round(circles[0, :]).astype("int")
+                circles_found = len(circles)
+                
+                # Draw circles
+                for j, circle in enumerate(circles):
+                    x, y, r = circle
+                    color = (0, 255, 0) if j == 0 else (0, 255, 255)  # Green for first, yellow for others
+                    cv2.circle(result_image, (x, y), r, color, 2)
+                    cv2.circle(result_image, (x, y), 3, color, -1)
+                    cv2.putText(result_image, f"{j+1}", (x+5, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            
+            # Show result
+            axes[row, col].imshow(cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB))
+            axes[row, col].set_title(f'{params["name"]}\n'
+                                   f'minDist={params["minDist"]}, param1={params["param1"]}, param2={params["param2"]}\n'
+                                   f'minR={params["minRadius"]}, maxR={params["maxRadius"]}\n'
+                                   f'Found: {circles_found} circles')
+            axes[row, col].axis('off')
+            
+            if debug:
+                print(f"   {params['name']}: Found {circles_found} circles")
+        
+        # Fill remaining empty subplots
+        for i in range(len(hough_params) + 1, 9):
+            row = i // 3
+            col = i % 3
+            if row < 3:
+                axes[row, col].axis('off')
+        
+        plt.tight_layout()
+        
+        # Save the detailed debug
+        debug_path = os.path.join(self.output_dir, "debug_detailed_parameter_testing.png")
+        plt.savefig(debug_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        if debug:
+            print(f"💾 Saved detailed parameter debug: {debug_path}")
+        
+        return debug_path
+    
+    def create_focused_parameter_debug(self, image, debug=False):
+        """Create focused debug visualization showing only the best circle from each parameter set"""
+        import matplotlib.pyplot as plt
+        
+        if debug:
+            print(f"\n🔍 FOCUSED PARAMETER DEBUG (BEST CIRCLES ONLY)")
+            print(f"   Input image shape: {image.shape}")
+            print(f"   Input image type: {image.dtype}")
+            print(f"   Input image range: {image.min()}-{image.max()}")
+        
+        # Convert to grayscale and apply median blur
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        blurred = cv2.medianBlur(gray, 5)
+        
+        if debug:
+            print(f"   Median blurred image range: {blurred.min()}-{blurred.max()}")
+        
+        # Test different Hough circle parameter sets
+        hough_params = [
+            {'name': 'Conservative', 'minDist': 100, 'param1': 50, 'param2': 30, 'minRadius': 80, 'maxRadius': 200},
+            {'name': 'Moderate', 'minDist': 50, 'param1': 50, 'param2': 30, 'minRadius': 40, 'maxRadius': 150},
+            {'name': 'Sensitive', 'minDist': 30, 'param1': 30, 'param2': 20, 'minRadius': 30, 'maxRadius': 120},
+            {'name': 'Very Sensitive', 'minDist': 20, 'param1': 20, 'param2': 15, 'minRadius': 20, 'maxRadius': 100},
+            {'name': 'Large Only', 'minDist': 80, 'param1': 50, 'param2': 25, 'minRadius': 60, 'maxRadius': 180},
+            {'name': 'Small Only', 'minDist': 30, 'param1': 40, 'param2': 20, 'minRadius': 20, 'maxRadius': 80},
+            {'name': 'Ultra Sensitive', 'minDist': 10, 'param1': 10, 'param2': 10, 'minRadius': 10, 'maxRadius': 150},
+            {'name': 'Edge Focus', 'minDist': 40, 'param1': 100, 'param2': 20, 'minRadius': 30, 'maxRadius': 120}
+        ]
+        
+        # Create focused visualization
+        fig, axes = plt.subplots(3, 3, figsize=(18, 18))
+        fig.suptitle('Focused Hough Circle Parameter Testing - Best Circle Only', fontsize=16)
+        
+        # Show original median blurred image in top-left
+        axes[0, 0].imshow(blurred, cmap='gray')
+        axes[0, 0].set_title('Median Blurred Image\n(Input for all tests)')
+        axes[0, 0].axis('off')
+        
+        # Test each parameter set
+        for i, params in enumerate(hough_params):
+            row = (i + 1) // 3
+            col = (i + 1) % 3
+            
+            if row >= 3:
+                break
+            
+            # Test Hough circles with these parameters
+            circles = cv2.HoughCircles(
+                blurred,
+                cv2.HOUGH_GRADIENT,
+                dp=1,
+                minDist=params['minDist'],
+                param1=params['param1'],
+                param2=params['param2'],
+                minRadius=params['minRadius'],
+                maxRadius=params['maxRadius']
+            )
+            
+            # Create result image
+            result_image = blurred.copy()
+            if len(result_image.shape) == 2:
+                result_image = cv2.cvtColor(result_image, cv2.COLOR_GRAY2BGR)
+            
+            circles_found = 0
+            best_circle = None
+            best_score = -float('inf')
+            
+            if circles is not None:
+                circles = np.round(circles[0, :]).astype("int")
+                circles_found = len(circles)
+                
+                # Find the best circle using our scoring function
+                for circle in circles:
+                    x, y, r = circle
+                    score = self.score_iris_circle(blurred, x, y, r)
+                    if score > best_score:
+                        best_score = score
+                        best_circle = circle
+                
+                # Draw only the best circle in bright green
+                if best_circle is not None:
+                    x, y, r = best_circle
+                    # Ensure radius is positive and within bounds
+                    if r > 0 and x >= 0 and y >= 0 and x < result_image.shape[1] and y < result_image.shape[0]:
+                        try:
+                            cv2.circle(result_image, (int(x), int(y)), int(r), (0, 255, 0), 3)  # Bright green
+                            cv2.circle(result_image, (int(x), int(y)), 5, (0, 255, 0), -1)  # Solid center
+                            cv2.putText(result_image, f"Best", (int(x)+10, int(y)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                            cv2.putText(result_image, f"Score: {best_score:.1f}", (int(x)+10, int(y)+20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                        except Exception as e:
+                            print(f"   Warning: Could not draw circle at ({x}, {y}) with radius {r}: {e}")
+            
+            # Show result
+            axes[row, col].imshow(cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB))
+            axes[row, col].set_title(f'{params["name"]}\n'
+                                   f'Total: {circles_found} circles\n'
+                                   f'Best: {best_circle if best_circle is not None else "None"}\n'
+                                   f'Score: {best_score:.1f}')
+            axes[row, col].axis('off')
+            
+            if debug:
+                if best_circle is not None:
+                    print(f"   {params['name']}: Best circle at {best_circle}, score={best_score:.1f}")
+                else:
+                    print(f"   {params['name']}: No circles found")
+        
+        # Fill remaining empty subplots
+        for i in range(len(hough_params) + 1, 9):
+            row = i // 3
+            col = i % 3
+            if row < 3:
+                axes[row, col].axis('off')
+        
+        plt.tight_layout()
+        
+        # Save the focused debug
+        debug_path = os.path.join(self.output_dir, "debug_focused_parameter_testing.png")
+        plt.savefig(debug_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        if debug:
+            print(f"💾 Saved focused parameter debug: {debug_path}")
+        
+        return debug_path
     
     def detect_pupil(self, image, iris_result):
         """Detect pupil using the working method from debug script"""
@@ -464,34 +1238,13 @@ class CleanVideoPupilTracker:
             processed_count = 0
             failed_count = 0
             
-            # Detect iris once at the beginning
-            print("Detecting iris from first frame...")
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ret, first_frame = self.cap.read()
+            # Initialize iris detection variables
+            iris_result = None
+            iris_detection_failures = 0
+            max_iris_failures = 50  # Allow more failures before giving up
+            last_good_iris = None  # Store last good iris detection
             
-            if not ret:
-                print("Error: Could not read first frame")
-                return False
-            
-            print(f"First frame shape: {first_frame.shape}")
-            print(f"First frame type: {first_frame.dtype}")
-            print(f"First frame min/max: {first_frame.min()}/{first_frame.max()}")
-            
-            iris_result = self.detect_iris(first_frame)
-            if iris_result is None:
-                print("Error: Could not detect iris in first frame")
-                print("This might be due to:")
-                print("  - Poor lighting conditions")
-                print("  - Eye not clearly visible")
-                print("  - Video quality issues")
-                return False
-            
-            print(f"Fixed iris: center={iris_result['center']}, radius={iris_result['radius']}")
-            
-            # Validate iris detection
-            if iris_result['radius'] <= 0:
-                print("Error: Invalid iris radius detected")
-                return False
+            print("Starting iris detection on every frame...")
         except Exception as e:
             print(f"Error in process_video setup: {e}")
             import traceback
@@ -508,17 +1261,54 @@ class CleanVideoPupilTracker:
                 failed_count += 1
                 continue
             
-            # Detect pupil using fixed iris
+            # Detect iris on every frame with jump debugging
+            current_iris = self.detect_iris_with_debug(frame, frame_number, last_good_iris)
+            
+            if current_iris is not None:
+                # Check if this is a reasonable iris detection
+                if last_good_iris is not None:
+                    # Calculate radius change percentage
+                    radius_change = abs(current_iris['radius'] - last_good_iris['radius']) / last_good_iris['radius']
+                    
+                    # Calculate position change (distance between centers)
+                    center_distance = np.sqrt((current_iris['center'][0] - last_good_iris['center'][0])**2 + 
+                                            (current_iris['center'][1] - last_good_iris['center'][1])**2)
+                    
+                    # If radius changes by more than 10% OR position jumps too far, use last good detection
+                    if radius_change > 0.10 or center_distance > 50:  # 50 pixel threshold for position jumps
+                        iris_result = last_good_iris
+                        # Don't reset failure count since we're using old detection
+                    else:
+                        iris_result = current_iris
+                        last_good_iris = current_iris
+                        iris_detection_failures = 0
+                else:
+                    # First detection, use it
+                    iris_result = current_iris
+                    last_good_iris = current_iris
+                    iris_detection_failures = 0
+            else:
+                iris_detection_failures += 1
+                
+                # If we have too many consecutive failures, give up
+                if iris_detection_failures >= max_iris_failures:
+                    print(f"Too many iris detection failures ({iris_detection_failures}), stopping processing")
+                    break
+                
+                # If we don't have a valid iris result, skip this frame
+                if iris_result is None:
+                    failed_count += 1
+                    continue
+            
+            # Detect pupil using current iris
             pupil_result = self.detect_pupil(frame, iris_result)
             if pupil_result is None:
-                print(f"Failed to detect pupil in frame {frame_number}")
                 failed_count += 1
                 continue
             
             # Validate pupil detection
             pupil_radius = pupil_result['radius']
             if pupil_radius <= 0:
-                print(f"Invalid pupil radius in frame {frame_number}: {pupil_radius}")
                 failed_count += 1
                 continue
             
@@ -526,10 +1316,8 @@ class CleanVideoPupilTracker:
             try:
                 timestamp = frame_number / self.fps
                 if not np.isfinite(timestamp):
-                    print(f"Invalid timestamp in frame {frame_number}: {timestamp}")
                     timestamp = 0.0
             except ZeroDivisionError:
-                print(f"Zero division error calculating timestamp in frame {frame_number} - FPS: {self.fps}")
                 timestamp = 0.0
             
             pupil_diameter = pupil_radius * 2
@@ -560,7 +1348,7 @@ class CleanVideoPupilTracker:
                 'detection_method': 'clean_debug_based'
             })
             
-            # Create visualization frame
+            # Create visualization frame with both iris and pupil
             vis_frame = self.create_visualization_frame(
                 frame, iris_result, pupil_result, frame_number, timestamp, pupil_radius
             )
@@ -605,22 +1393,35 @@ class CleanVideoPupilTracker:
         """Create visualization frame with detection overlays"""
         vis_frame = frame.copy()
         
-        # Draw iris circle
-        iris_center = iris_result['center']
-        iris_radius = iris_result['radius']
-        cv2.circle(vis_frame, iris_center, iris_radius, (0, 255, 0), 3)  # Green for iris
-        cv2.circle(vis_frame, iris_center, 5, (0, 255, 0), -1)
+        # Draw iris circle (green)
+        if iris_result is not None:
+            iris_center = iris_result['center']
+            iris_radius = iris_result['radius']
+            cv2.circle(vis_frame, iris_center, iris_radius, (0, 255, 0), 3)  # Green for iris
+            cv2.circle(vis_frame, iris_center, 5, (0, 255, 0), -1)
+            cv2.putText(vis_frame, f"Iris: r={iris_radius}", (iris_center[0] + 10, iris_center[1] - 10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         
-        # Draw pupil circle
-        pupil_center = pupil_result['center']
-        pupil_radius = pupil_result['radius']
-        cv2.circle(vis_frame, pupil_center, pupil_radius, (0, 255, 255), 3)  # Yellow for pupil
-        cv2.circle(vis_frame, pupil_center, 3, (0, 255, 255), -1)
+        # Draw pupil circle (yellow)
+        if pupil_result is not None:
+            pupil_center = pupil_result['center']
+            pupil_radius = pupil_result['radius']
+            cv2.circle(vis_frame, pupil_center, pupil_radius, (0, 255, 255), 3)  # Yellow for pupil
+            cv2.circle(vis_frame, pupil_center, 3, (0, 255, 255), -1)
+            cv2.putText(vis_frame, f"Pupil: r={pupil_radius}", (pupil_center[0] + 10, pupil_center[1] + 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
         
-        # Add text information
-        info_text = f"Frame: {frame_idx} | Time: {timestamp:.2f}s | Pupil r: {pupil_radius}px"
+        # Add frame information
+        info_text = f"Frame: {frame_idx} | Time: {timestamp:.2f}s"
         cv2.putText(vis_frame, info_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(vis_frame, "CLEAN DEBUG-BASED", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # Add detection status
+        status_text = "IRIS + PUPIL DETECTION"
+        cv2.putText(vis_frame, status_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # Add legend
+        cv2.putText(vis_frame, "Green: Iris", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        cv2.putText(vis_frame, "Yellow: Pupil", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
         
         return vis_frame
     
