@@ -397,84 +397,136 @@ class CleanVideoPupilTracker:
             'score': best_score
         }
     
-    def detect_iris_with_debug(self, image, frame_number, last_good_iris=None):
-        """Detect iris with additional debugging for jumps"""
-        current_iris = self.detect_iris(image, debug=False)
+
+    def preprocess_frame(self, frame):
+        """Apply preprocessing before circle detection."""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.medianBlur(gray, 5)
+
+        # CLAHE for local contrast
+        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(blurred)
+
+        # Unsharp mask for edge emphasis
+        gaussian = cv2.GaussianBlur(enhanced, (9, 9), 10.0)
+        sharpened = cv2.addWeighted(enhanced, 1.5, gaussian, -0.5, 0)
+
+        return sharpened
+
+    def detect_iris_circles(self, frame, r_min, r_max):
+        """Run HoughCircles on a preprocessed frame with radius filtering."""
+        processed = self.preprocess_frame(frame)
+
+        circles = cv2.HoughCircles(
+            processed,
+            cv2.HOUGH_GRADIENT,
+            dp=1.2,
+            minDist=frame.shape[0] // 4,
+            param1=100,
+            param2=20,
+            minRadius=60,
+            maxRadius=250
+        )
+
+        if circles is not None:
+            circles = np.round(circles[0, :]).astype("int")  # flatten to shape (N, 3)
+
+            # filter by radius range
+            circles = [c for c in circles if r_min <= c[2] <= r_max]
+
+            if len(circles) > 0:
+                # just take the first valid circle
+                x, y, r = circles[0]
+                return (x, y, r)
         
-        if current_iris is not None and last_good_iris is not None:
-            # Calculate position change
-            center_distance = np.sqrt((current_iris['center'][0] - last_good_iris['center'][0])**2 + 
-                                    (current_iris['center'][1] - last_good_iris['center'][1])**2)
-            
-            # If there's a big jump, save debug info
-            if center_distance > 50:
-                print(f"⚠️  BIG JUMP detected at frame {frame_number}:")
-                print(f"   Last good: center={last_good_iris['center']}, radius={last_good_iris['radius']}")
-                print(f"   Current:   center={current_iris['center']}, radius={current_iris['radius']}")
-                print(f"   Distance:  {center_distance:.1f} pixels")
-                
-                # Save debug frame
-                debug_frame = image.copy()
-                cv2.circle(debug_frame, last_good_iris['center'], last_good_iris['radius'], (0, 255, 0), 2)
-                cv2.circle(debug_frame, current_iris['center'], current_iris['radius'], (0, 0, 255), 2)
-                cv2.putText(debug_frame, f"Frame {frame_number} - JUMP", (10, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                cv2.imwrite(f"/Users/avafascetti/Desktop/debug_jump_frame_{frame_number}.png", debug_frame)
-                print(f"   Debug frame saved: debug_jump_frame_{frame_number}.png")
-        
-        return current_iris
+        return None
 
     def detect_iris(self, image, debug=False):
-        """Detect iris using the working method from debug script"""
-        # Preprocess for iris detection (using same method as successful debug script)
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image.copy()
+        """Detect iris using radius filtering"""
+        # Apply radius filtering (110-140 pixels)
+        circle = self.detect_iris_circles(image, 110, 140)
         
-        # Use histogram equalization + median blur (same as debug script)
-        enhanced = cv2.equalizeHist(gray)          # contrast enhancement
-        enhanced = cv2.medianBlur(enhanced, 5)     # reduce noise, preserve edges
-        
-        # Find Hough circles using Conservative parameters (found to work well)
-        circles = cv2.HoughCircles(
-            enhanced,
-            cv2.HOUGH_GRADIENT,
-            dp=1.5,
-            minDist=120,
-            param1=150,
-            param2=40,
-            minRadius=80,
-            maxRadius=300
-        )
-        
-        if circles is None:
+        if circle is None:
             return None
-
-        circles = np.round(circles[0, :]).astype("int")
-
-        # Score each circle based on intensity differences
-        best_circle = None
-        best_score = -float('inf')
-
-        for i, circle in enumerate(circles):
-            x, y, r = circle
-            score = self.score_iris_circle(enhanced, x, y, r)
-
-            if score > best_score:
-                best_score = score
-                best_circle = circle
-
-        if best_circle is None:
-            return None
-
-        x, y, r = best_circle
         
+        x, y, r = circle
         return {
             'center': (x, y),
             'radius': r,
-            'score': best_score
+            'score': 1.0
         }
+    
+    def score_iris_circle(self, image, x, y, r):
+        """Score an iris circle based on intensity differences"""
+        h, w = image.shape
+
+        # Check if circle is within image bounds
+        if x - r < 0 or x + r >= w or y - r < 0 or y + r >= h:
+            return -float('inf')
+
+        # Create masks for inner and outer rings
+        inner_mask = np.zeros((h, w), dtype=np.uint8)
+        outer_mask = np.zeros((h, w), dtype=np.uint8)
+
+        # Inner ring (iris area)
+        cv2.circle(inner_mask, (x, y), r - 5, 255, -1)
+        cv2.circle(inner_mask, (x, y), r - 15, 0, -1)
+
+        # Outer ring (sclera area)
+        cv2.circle(outer_mask, (x, y), r + 5, 255, -1)
+        cv2.circle(outer_mask, (x, y), r - 5, 0, -1)
+
+        # Calculate mean intensities
+        inner_intensity = cv2.mean(image, inner_mask)[0]
+        outer_intensity = cv2.mean(image, outer_mask)[0]
+
+        # Calculate intensity difference (iris should be darker than sclera)
+        intensity_diff = outer_intensity - inner_intensity
+
+        # Calculate consistency within rings
+        inner_std = np.std(image[inner_mask > 0])
+        outer_std = np.std(image[outer_mask > 0])
+        consistency = 1.0 / (1.0 + inner_std + outer_std)
+
+        # Combined score
+        score = 0.7 * intensity_diff + 0.15 * consistency
+
+        return score
+    
+    
+    def calculate_iris_darkness_score(self, image, center, radius):
+        """Calculate how good a circle is as an iris (lower = better)"""
+        x, y = center
+        h, w = image.shape
+        
+        # Check if circle is within image bounds
+        if x - radius < 0 or x + radius >= w or y - radius < 0 or y + radius >= h:
+            return float('inf')
+        
+        # Create masks for inner (iris) and outer (sclera) regions
+        inner_mask = np.zeros((h, w), dtype=np.uint8)
+        outer_mask = np.zeros((h, w), dtype=np.uint8)
+        
+        # Inner circle (iris area)
+        cv2.circle(inner_mask, (x, y), radius, 255, -1)
+        
+        # Outer ring (sclera area) - slightly larger circle minus inner circle
+        outer_radius = int(radius * 1.3)  # 30% larger
+        if outer_radius < w//2 and outer_radius < h//2:  # Make sure it fits
+            cv2.circle(outer_mask, (x, y), outer_radius, 255, -1)
+            cv2.circle(outer_mask, (x, y), radius, 0, -1)  # Remove inner circle
+        
+        # Calculate mean intensities
+        inner_intensity = cv2.mean(image, inner_mask)[0]
+        outer_intensity = cv2.mean(image, outer_mask)[0]
+        
+        # Good iris should be darker than sclera
+        # Lower score = darker iris relative to sclera
+        if outer_intensity > 0:  # Avoid division by zero
+            darkness_ratio = inner_intensity / outer_intensity
+            return darkness_ratio
+        else:
+            return float('inf')
     
     def score_iris_circle(self, image, x, y, r):
         """Score an iris circle based on intensity differences"""
@@ -1014,7 +1066,11 @@ class CleanVideoPupilTracker:
         return debug_path
     
     def detect_pupil(self, image, iris_result):
-        """Detect pupil using the working method from debug script"""
+        """Detect pupil using the original method that finds the full pupil boundary"""
+        if iris_result is None:
+            return None
+        
+        # Extract iris region
         iris_center = iris_result['center']
         iris_radius = iris_result['radius']
         
@@ -1048,6 +1104,24 @@ class CleanVideoPupilTracker:
         pupil_circle = self.find_radius_around_iris_center(largest_cluster_points, iris_center)
         
         return pupil_circle
+    
+    def calculate_circle_darkness(self, image, center, radius):
+        """Calculate how dark a circle is (lower values = darker)"""
+        x, y = center
+        h, w = image.shape
+        
+        # Check if circle is within image bounds
+        if x - radius < 0 or x + radius >= w or y - radius < 0 or y + radius >= h:
+            return float('inf')
+        
+        # Create circle mask
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.circle(mask, (x, y), radius, 255, -1)
+        
+        # Calculate mean intensity inside the circle (lower = darker)
+        mean_intensity = cv2.mean(image, mask)[0]
+        
+        return mean_intensity
     
     def get_iris_baseline_intensity(self, image, iris_center, iris_radius):
         """Get baseline iris intensity from circle 40 pixels inside iris"""
@@ -1232,19 +1306,55 @@ class CleanVideoPupilTracker:
         }
     
     def process_video(self):
-        """Process the entire video"""
+        """Process the entire video with two-phase approach"""
         try:
-            frame_idx = 0
+            print("Phase 1: Running iris detection on entire video to get median values...")
+            
+            # Phase 1: Run through entire video to collect iris detections
+            iris_detections = []
+            frame_count = 0
+            
+            # Reset video to beginning
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            
+            while True:
+                ret, frame = self.cap.read()
+                if not ret:
+                    break
+                
+                # Detect iris with radius filtering
+                circle = self.detect_iris_circles(frame, 110, 140)
+                if circle is not None:
+                    iris_detections.append(circle)
+                
+                frame_count += 1
+                if frame_count % 30 == 0:
+                    print(f"  Processed {frame_count} frames, found {len(iris_detections)} iris detections")
+            
+            # Calculate median iris values
+            if iris_detections:
+                iris_detections = np.array(iris_detections)
+                median_x = int(np.median(iris_detections[:, 0]))
+                median_y = int(np.median(iris_detections[:, 1]))
+                median_r = int(np.median(iris_detections[:, 2]))
+                print(f"✅ Median iris: center=({median_x}, {median_y}), radius={median_r}")
+                
+                # Set fixed iris for entire video
+                self.fixed_iris = {
+                    'center': (median_x, median_y),
+                    'radius': median_r,
+                    'score': 1.0
+                }
+            else:
+                print("❌ No iris detections found in entire video")
+                return False
+            
+            print("Phase 2: Processing video with fixed iris for pupil detection...")
+            
+            # Phase 2: Process video with fixed iris
             processed_count = 0
             failed_count = 0
             
-            # Initialize iris detection variables
-            iris_result = None
-            iris_detection_failures = 0
-            max_iris_failures = 50  # Allow more failures before giving up
-            last_good_iris = None  # Store last good iris detection
-            
-            print("Starting iris detection on every frame...")
         except Exception as e:
             print(f"Error in process_video setup: {e}")
             import traceback
@@ -1261,44 +1371,8 @@ class CleanVideoPupilTracker:
                 failed_count += 1
                 continue
             
-            # Detect iris on every frame with jump debugging
-            current_iris = self.detect_iris_with_debug(frame, frame_number, last_good_iris)
-            
-            if current_iris is not None:
-                # Check if this is a reasonable iris detection
-                if last_good_iris is not None:
-                    # Calculate radius change percentage
-                    radius_change = abs(current_iris['radius'] - last_good_iris['radius']) / last_good_iris['radius']
-                    
-                    # Calculate position change (distance between centers)
-                    center_distance = np.sqrt((current_iris['center'][0] - last_good_iris['center'][0])**2 + 
-                                            (current_iris['center'][1] - last_good_iris['center'][1])**2)
-                    
-                    # If radius changes by more than 10% OR position jumps too far, use last good detection
-                    if radius_change > 0.10 or center_distance > 50:  # 50 pixel threshold for position jumps
-                        iris_result = last_good_iris
-                        # Don't reset failure count since we're using old detection
-                    else:
-                        iris_result = current_iris
-                        last_good_iris = current_iris
-                        iris_detection_failures = 0
-                else:
-                    # First detection, use it
-                    iris_result = current_iris
-                    last_good_iris = current_iris
-                    iris_detection_failures = 0
-            else:
-                iris_detection_failures += 1
-                
-                # If we have too many consecutive failures, give up
-                if iris_detection_failures >= max_iris_failures:
-                    print(f"Too many iris detection failures ({iris_detection_failures}), stopping processing")
-                    break
-                
-                # If we don't have a valid iris result, skip this frame
-                if iris_result is None:
-                    failed_count += 1
-                    continue
+            # Use fixed iris from Phase 1
+            iris_result = self.fixed_iris
             
             # Detect pupil using current iris
             pupil_result = self.detect_pupil(frame, iris_result)

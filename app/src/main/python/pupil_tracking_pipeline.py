@@ -85,16 +85,22 @@ class PupilTrackingPipeline:
             
             # Check if iris detection parameters might be too restrictive
             min_dimension = min(actual_width, actual_height)
+            # Calculate dynamic parameters (same as in video_pupil_tracker.py)
+            min_radius = max(20, min_dimension // 20)
+            max_radius = min_dimension // 4
+            min_dist = min_radius * 2
+            
             print(f"📏 Iris detection parameter analysis:")
             print(f"   Video dimensions: {actual_width}x{actual_height}")
-            print(f"   Current minRadius=120, maxRadius=250, minDist=150")
+            print(f"   Dynamic minRadius={min_radius}, maxRadius={max_radius}, minDist={min_dist}")
             print(f"   Min dimension: {min_dimension}")
             
-            if min_dimension < 800:
-                print(f"⚠️  Video has small dimensions - iris detection may fail")
-                print(f"   Consider using smaller detection parameters")
-            elif min_dimension > 1000:
-                print(f"ℹ️  Video has large dimensions - current parameters should work")
+            if min_dimension < 400:
+                print(f"⚠️  Video has very small dimensions - iris detection may be challenging")
+            elif min_dimension < 600:
+                print(f"ℹ️  Video has small dimensions - using scaled parameters")
+            else:
+                print(f"ℹ️  Video has good dimensions - parameters should work well")
         else:
             print("❌ Could not read first frame for dimension check")
         
