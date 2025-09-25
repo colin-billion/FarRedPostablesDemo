@@ -459,38 +459,38 @@ class CleanVideoPupilTracker:
     def score_iris_circle(self, image, x, y, r):
         """Score an iris circle based on intensity differences"""
         h, w = image.shape
-
+        
         # Check if circle is within image bounds
         if x - r < 0 or x + r >= w or y - r < 0 or y + r >= h:
             return -float('inf')
-
+        
         # Create masks for inner and outer rings
         inner_mask = np.zeros((h, w), dtype=np.uint8)
         outer_mask = np.zeros((h, w), dtype=np.uint8)
-
+        
         # Inner ring (iris area)
         cv2.circle(inner_mask, (x, y), r - 5, 255, -1)
         cv2.circle(inner_mask, (x, y), r - 15, 0, -1)
-
+        
         # Outer ring (sclera area)
         cv2.circle(outer_mask, (x, y), r + 5, 255, -1)
         cv2.circle(outer_mask, (x, y), r - 5, 0, -1)
-
+        
         # Calculate mean intensities
         inner_intensity = cv2.mean(image, inner_mask)[0]
         outer_intensity = cv2.mean(image, outer_mask)[0]
-
+        
         # Calculate intensity difference (iris should be darker than sclera)
         intensity_diff = outer_intensity - inner_intensity
-
+        
         # Calculate consistency within rings
         inner_std = np.std(image[inner_mask > 0])
         outer_std = np.std(image[outer_mask > 0])
         consistency = 1.0 / (1.0 + inner_std + outer_std)
-
+        
         # Combined score
         score = 0.7 * intensity_diff + 0.15 * consistency
-
+        
         return score
     
     
@@ -1065,7 +1065,7 @@ class CleanVideoPupilTracker:
         
         return debug_path
     
-    def detect_pupil(self, image, iris_result):
+    def detect_pupil(self, image, iris_result, debug=False, frame_number=0):
         """Detect pupil using the original method that finds the full pupil boundary"""
         if iris_result is None:
             return None
@@ -1092,18 +1092,150 @@ class CleanVideoPupilTracker:
             enhanced, iris_center, iris_radius, baseline_intensity)
         
         if len(dark_coords[0]) == 0:
+            if debug:
+                self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
+                                                    baseline_intensity, None, None, None, frame_number)
             return None
         
         # Find largest cluster
         largest_cluster_points, all_labels = self.find_largest_cluster(dark_coords)
         
         if largest_cluster_points is None:
+            if debug:
+                self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
+                                                    baseline_intensity, dark_coords, None, None, frame_number)
             return None
         
         # Find radius around iris center
         pupil_circle = self.find_radius_around_iris_center(largest_cluster_points, iris_center)
         
+        if debug:
+            self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
+                                                baseline_intensity, dark_coords, largest_cluster_points, pupil_circle, frame_number)
+        
         return pupil_circle
+    
+    def create_pupil_debug_visualization(self, original, gray, enhanced, iris_center, iris_radius, 
+                                       baseline_intensity, dark_coords, cluster_points, pupil_circle, frame_number):
+        """Create comprehensive debug visualization for pupil detection"""
+        import os
+        
+        # Create debug directory
+        debug_dir = os.path.join(self.output_dir, "pupil_debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        # Calculate target size maintaining aspect ratio
+        h, w = original.shape[:2]
+        target_height = 300
+        target_width = int(w * target_height / h)
+        target_size = (target_width, target_height)
+        
+        # Resize images
+        original_resized = cv2.resize(original, target_size)
+        gray_resized = cv2.resize(gray, target_size)
+        enhanced_resized = cv2.resize(enhanced, target_size)
+        
+        # Convert grayscale to BGR for display
+        gray_bgr = cv2.cvtColor(gray_resized, cv2.COLOR_GRAY2BGR)
+        enhanced_bgr = cv2.cvtColor(enhanced_resized, cv2.COLOR_GRAY2BGR)
+        
+        # Scale coordinates to resized image
+        scale_x = target_size[0] / w
+        scale_y = target_size[1] / h
+        
+        # Scale iris center and radius
+        iris_center_scaled = (int(iris_center[0] * scale_x), int(iris_center[1] * scale_y))
+        iris_radius_scaled = int(iris_radius * min(scale_x, scale_y))
+        
+        # Create visualization images
+        # 1. Original with iris circle
+        original_with_iris = original_resized.copy()
+        cv2.circle(original_with_iris, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
+        cv2.circle(original_with_iris, iris_center_scaled, 2, (0, 0, 255), 3)
+        
+        # 2. Enhanced with iris circle and baseline circle
+        enhanced_with_circles = enhanced_bgr.copy()
+        cv2.circle(enhanced_with_circles, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
+        # Draw baseline circle (40 pixels inside iris)
+        baseline_radius_scaled = int((iris_radius - 40) * min(scale_x, scale_y))
+        if baseline_radius_scaled > 0:
+            cv2.circle(enhanced_with_circles, iris_center_scaled, baseline_radius_scaled, (255, 0, 0), 2)
+        
+        # 3. Dark pixels visualization
+        dark_pixels_img = enhanced_bgr.copy()
+        if dark_coords is not None and len(dark_coords[0]) > 0:
+            # Scale dark pixel coordinates
+            dark_y_scaled = (dark_coords[0] * scale_y).astype(int)
+            dark_x_scaled = (dark_coords[1] * scale_x).astype(int)
+            # Draw dark pixels
+            for i in range(len(dark_y_scaled)):
+                if 0 <= dark_y_scaled[i] < target_size[1] and 0 <= dark_x_scaled[i] < target_size[0]:
+                    dark_pixels_img[dark_y_scaled[i], dark_x_scaled[i]] = [0, 0, 255]  # Red
+        
+        # 4. Cluster visualization
+        cluster_img = enhanced_bgr.copy()
+        if cluster_points is not None and len(cluster_points) > 0:
+            # Scale cluster points
+            cluster_scaled = cluster_points * np.array([scale_x, scale_y])
+            for point in cluster_scaled:
+                x, y = int(point[0]), int(point[1])
+                if 0 <= x < target_size[0] and 0 <= y < target_size[1]:
+                    cv2.circle(cluster_img, (x, y), 1, (0, 255, 255), -1)  # Yellow dots
+        
+        # 5. Final result
+        final_result = original_resized.copy()
+        if pupil_circle is not None:
+            pupil_center_scaled = (int(pupil_circle['center'][0] * scale_x), 
+                                 int(pupil_circle['center'][1] * scale_y))
+            pupil_radius_scaled = int(pupil_circle['radius'] * min(scale_x, scale_y))
+            cv2.circle(final_result, pupil_center_scaled, pupil_radius_scaled, (0, 255, 0), 3)
+            cv2.circle(final_result, pupil_center_scaled, 2, (0, 0, 255), 3)
+        
+        # 6. Parameters text
+        params_img = np.zeros((target_size[1], target_size[0], 3), dtype=np.uint8)
+        params_text = [
+            f"Frame: {frame_number}",
+            f"Iris Center: ({iris_center[0]}, {iris_center[1]})",
+            f"Iris Radius: {iris_radius}",
+            f"Baseline Intensity: {baseline_intensity:.1f}",
+            f"Dark Pixels: {len(dark_coords[0]) if dark_coords is not None else 0}",
+            f"Cluster Points: {len(cluster_points) if cluster_points is not None else 0}",
+            f"Pupil Radius: {pupil_circle['radius'] if pupil_circle is not None else 'N/A'}",
+            f"Pupil Center: ({pupil_circle['center'][0] if pupil_circle is not None else 'N/A'}, {pupil_circle['center'][1] if pupil_circle is not None else 'N/A'})"
+        ]
+        
+        for i, text in enumerate(params_text):
+            cv2.putText(params_img, text, (10, 30 + i * 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        # Add white padding between images
+        padding = 10
+        white_padding = np.ones((target_size[1], padding, 3), dtype=np.uint8) * 255
+        white_padding_h = np.ones((padding, target_size[0] * 3 + padding * 2, 3), dtype=np.uint8) * 255
+        
+        # Create 3x2 grid
+        # Row 1: Original+Iris, Enhanced+Circles, Dark Pixels
+        row1 = np.hstack([original_with_iris, white_padding, enhanced_with_circles, white_padding, dark_pixels_img])
+        
+        # Row 2: Cluster, Final Result, Parameters
+        row2 = np.hstack([cluster_img, white_padding, final_result, white_padding, params_img])
+        
+        # Combine rows
+        comprehensive = np.vstack([row1, white_padding_h, row2])
+        
+        # Add labels
+        label_y = 20
+        cv2.putText(comprehensive, "Original+Iris", (10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Enhanced+Circles", (target_size[0] + padding + 10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Dark Pixels", (2 * (target_size[0] + padding) + 10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        
+        cv2.putText(comprehensive, "Cluster", (10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Final Result", (target_size[0] + padding + 10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Parameters", (2 * (target_size[0] + padding) + 10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        
+        # Save comprehensive visualization
+        debug_path = f"{debug_dir}/pupil_debug_frame_{frame_number:03d}.jpg"
+        cv2.imwrite(debug_path, comprehensive)
+        print(f"📊 Pupil debug visualization saved: {debug_path}")
     
     def calculate_circle_darkness(self, image, center, radius):
         """Calculate how dark a circle is (lower values = darker)"""
@@ -1141,7 +1273,7 @@ class CleanVideoPupilTracker:
         return baseline_intensity
     
     def find_dark_pixels_adaptive(self, image, iris_center, iris_radius, baseline_intensity):
-        """Find dark pixels with hybrid approach: 5th percentile core + gradient boundary expansion"""
+        """Find dark pixels using intensity-based thresholding (less conservative)"""
         x, y = iris_center
         max_pupil_radius = int(iris_radius * 0.8)
         
@@ -1156,22 +1288,19 @@ class CleanVideoPupilTracker:
         if len(dark_iris_pixels) == 0:
             return (np.array([]), np.array([])), baseline_intensity
         
-        # Use 5% percentile for core dark pixels
-        threshold_core = np.percentile(dark_iris_pixels, 5)
+        # Use intensity-based threshold instead of percentile
+        # Set threshold to be 20% darker than baseline (more inclusive)
+        threshold_core = baseline_intensity * 0.8
         
-        # Find core dark pixels
-        core_dark_pixels = (image < threshold_core) & (iris_mask > 0)
-        core_coords = np.where(core_dark_pixels)
+        # Find dark pixels using the intensity threshold
+        dark_pixels = (image < threshold_core) & (iris_mask > 0)
+        dark_coords = np.where(dark_pixels)
         
-        if len(core_coords[0]) == 0:
+        if len(dark_coords[0]) == 0:
             return (np.array([]), np.array([])), threshold_core
         
-        # Expand from core using gradient analysis
-        expanded_coords = self.expand_pupil_boundary_gradient(
-            image, iris_center, iris_radius, core_coords, baseline_intensity, iris_mask
-        )
-        
-        return expanded_coords, threshold_core
+        # No expansion needed - we're already capturing more of the pupil
+        return dark_coords, threshold_core
     
     def expand_pupil_boundary_gradient(self, image, iris_center, iris_radius, core_coords, baseline_intensity, iris_mask):
         """Expand pupil boundary using gradient analysis from core dark pixels"""
@@ -1374,8 +1503,9 @@ class CleanVideoPupilTracker:
             # Use fixed iris from Phase 1
             iris_result = self.fixed_iris
             
-            # Detect pupil using current iris
-            pupil_result = self.detect_pupil(frame, iris_result)
+            # Detect pupil using current iris (enable debug for specific frames)
+            debug_enabled = frame_number in [0, 15, 30, 45, 60, 75, 90, 105, 120, 135]
+            pupil_result = self.detect_pupil(frame, iris_result, debug=debug_enabled, frame_number=frame_number)
             if pupil_result is None:
                 failed_count += 1
                 continue
