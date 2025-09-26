@@ -1065,7 +1065,7 @@ class CleanVideoPupilTracker:
         
         return debug_path
     
-    def detect_pupil(self, image, iris_result, debug=False, frame_number=0):
+    def detect_pupil(self, image, iris_result, debug=False, frame_number=0, last_pupil_result=None):
         """Detect pupil using the original method that finds the full pupil boundary"""
         if iris_result is None:
             return None
@@ -1089,7 +1089,7 @@ class CleanVideoPupilTracker:
         
         # Find dark pixels with adaptive thresholding
         dark_coords, threshold_used = self.find_dark_pixels_adaptive(
-            enhanced, iris_center, iris_radius, baseline_intensity)
+            enhanced, iris_center, iris_radius, baseline_intensity, frame_number)
         
         if len(dark_coords[0]) == 0:
             if debug:
@@ -1107,7 +1107,7 @@ class CleanVideoPupilTracker:
             return None
         
         # Find radius around iris center
-        pupil_circle = self.find_radius_around_iris_center(largest_cluster_points, iris_center)
+        pupil_circle = self.find_radius_around_iris_center(largest_cluster_points, iris_center, iris_radius, frame_number, last_pupil_result)
         
         if debug:
             self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
@@ -1200,11 +1200,20 @@ class CleanVideoPupilTracker:
             cluster_center_distance = np.sqrt((cluster_center[0] - iris_center[0])**2 + (cluster_center[1] - iris_center[1])**2)
             cluster_center_distance = f"{cluster_center_distance:.1f}"
         
+        # Calculate iris brightness for debugging
+        iris_mask = np.zeros(enhanced.shape, dtype=np.uint8)
+        cv2.circle(iris_mask, iris_center, iris_radius, 255, -1)
+        iris_pixels = enhanced[iris_mask > 0]
+        iris_mean = np.mean(iris_pixels) if len(iris_pixels) > 0 else 0
+        iris_std = np.std(iris_pixels) if len(iris_pixels) > 0 else 0
+        
         params_text = [
             f"Frame: {frame_number}",
             f"Iris Center: ({iris_center[0]}, {iris_center[1]})",
             f"Iris Radius: {iris_radius}",
             f"Baseline Intensity: {baseline_intensity:.1f}",
+            f"Iris Mean: {iris_mean:.1f}",
+            f"Iris Std: {iris_std:.1f}",
             f"Dark Pixels: {len(dark_coords[0]) if dark_coords is not None else 0}",
             f"Cluster Points: {len(cluster_points) if cluster_points is not None else 0}",
             f"Cluster Dist from Iris: {cluster_center_distance}",
@@ -1280,8 +1289,8 @@ class CleanVideoPupilTracker:
         
         return baseline_intensity
     
-    def find_dark_pixels_adaptive(self, image, iris_center, iris_radius, baseline_intensity):
-        """Find dark pixels using intensity-based thresholding (less conservative)"""
+    def find_dark_pixels_adaptive(self, image, iris_center, iris_radius, baseline_intensity, frame_number):
+        """Find dark pixels using adaptive thresholding with brightness constraints"""
         x, y = iris_center
         max_pupil_radius = int(iris_radius * 0.8)
         
@@ -1289,25 +1298,36 @@ class CleanVideoPupilTracker:
         iris_mask = np.zeros(image.shape, dtype=np.uint8)
         cv2.circle(iris_mask, (x, y), max_pupil_radius, 255, -1)
         
-        # Get all pixels within iris area that are darker than baseline
+        # Get all pixels within iris area
         iris_pixels = image[iris_mask > 0]
-        dark_iris_pixels = iris_pixels[iris_pixels < baseline_intensity]
         
-        if len(dark_iris_pixels) == 0:
+        if len(iris_pixels) == 0:
             return (np.array([]), np.array([])), baseline_intensity
         
-        # Use intensity-based threshold instead of percentile
-        # Set threshold to be 20% darker than baseline (more inclusive)
-        threshold_core = baseline_intensity * 0.8
+        # Calculate iris brightness statistics
+        iris_mean = np.mean(iris_pixels)
+        iris_std = np.std(iris_pixels)
         
-        # Find dark pixels using the intensity threshold
+        # Use very strict threshold for bright region (frames 40-85)
+        if 40 <= frame_number <= 85:  # Bright region - very strict threshold
+            # Extremely strict: only very dark pixels (hardcoded low value)
+            threshold_core = 50  # Very low threshold for bright region
+        else:  # Outside bright region - use adaptive threshold
+            if iris_mean > 100:  # Medium brightness
+                threshold_core = iris_mean - iris_std
+            else:  # Dark scene
+                threshold_core = baseline_intensity * 0.8
+        
+        # Ensure threshold is reasonable (not too low)
+        threshold_core = max(threshold_core, 30)  # Minimum threshold of 30
+        
+        # Find dark pixels using the adaptive threshold
         dark_pixels = (image < threshold_core) & (iris_mask > 0)
         dark_coords = np.where(dark_pixels)
-        
+
         if len(dark_coords[0]) == 0:
             return (np.array([]), np.array([])), threshold_core
-        
-        # No expansion needed - we're already capturing more of the pupil
+
         return dark_coords, threshold_core
     
     def expand_pupil_boundary_gradient(self, image, iris_center, iris_radius, core_coords, baseline_intensity, iris_mask):
@@ -1442,8 +1462,8 @@ class CleanVideoPupilTracker:
         
         return cluster_points, point_labels
     
-    def find_radius_around_iris_center(self, cluster_points, iris_center):
-        """Find the best circle around the cluster using minEnclosingCircle"""
+    def find_radius_around_iris_center(self, cluster_points, iris_center, iris_radius, frame_number, last_pupil_result=None):
+        """Find the best circle around the cluster using minEnclosingCircle with temporal constraints"""
         if len(cluster_points) == 0:
             return None
         
@@ -1453,6 +1473,48 @@ class CleanVideoPupilTracker:
         
         # Use OpenCV's minEnclosingCircle to find the best circle
         (center_x, center_y), radius = cv2.minEnclosingCircle(points_for_circle)
+        
+        # Apply temporal constraints if we have previous frame data
+        if last_pupil_result is not None:
+            last_center = last_pupil_result['center']
+            last_radius = last_pupil_result['radius']
+            
+            # Constrain center movement (max 10 pixels per frame)
+            center_distance = np.sqrt((center_x - last_center[0])**2 + (center_y - last_center[1])**2)
+            if center_distance > 10:
+                # Scale back to max 10 pixel movement
+                direction_x = (center_x - last_center[0]) / center_distance
+                direction_y = (center_y - last_center[1]) / center_distance
+                center_x = last_center[0] + direction_x * 10
+                center_y = last_center[1] + direction_y * 10
+            
+            # Constrain radius change (max 5 pixels per frame)
+            radius_change = radius - last_radius
+            if abs(radius_change) > 5:
+                radius = last_radius + (5 if radius_change > 0 else -5)
+        
+        # Apply brightness-based constraints
+        is_bright_frame = 40 <= frame_number <= 85
+        
+        if is_bright_frame:
+            # During bright region: enforce minimum pupil size
+            min_pupil_radius = 15  # Minimum during bright frames
+            max_pupil_radius = int(iris_radius * 0.4)  # Max 40% of iris during bright frames
+        else:
+            # Outside bright region: allow larger pupils
+            min_pupil_radius = 20  # Minimum outside bright frames
+            max_pupil_radius = int(iris_radius * 0.6)  # Max 60% of iris outside bright frames
+        
+        # Apply radius constraints
+        radius = max(min_pupil_radius, min(radius, max_pupil_radius))
+        
+        # Ensure pupil center is within iris bounds
+        distance_from_iris_center = np.sqrt((center_x - iris_center[0])**2 + (center_y - iris_center[1])**2)
+        max_distance_from_center = int(iris_radius * 0.4)  # Pupil center within 40% of iris radius
+        
+        if distance_from_iris_center > max_distance_from_center:
+            # If too far from center, use iris center as pupil center
+            center_x, center_y = iris_center
         
         return {
             'center': (int(center_x), int(center_y)),
@@ -1515,6 +1577,9 @@ class CleanVideoPupilTracker:
             traceback.print_exc()
             return False
         
+        # Track previous pupil result for temporal constraints
+        last_pupil_result = None
+        
         for frame_number in self.frames_to_process:
             # Set frame position
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
@@ -1529,8 +1594,12 @@ class CleanVideoPupilTracker:
             iris_result = self.fixed_iris
             
             # Detect pupil using current iris (enable debug for specific frames)
-            debug_enabled = frame_number in [0, 15, 30, 45, 60, 75, 90, 105, 120, 135]
-            pupil_result = self.detect_pupil(frame, iris_result, debug=debug_enabled, frame_number=frame_number)
+            # Enable debug for specific frames and bright region (frames 40-85)
+            debug_frames = [0, 15, 30, 45, 60, 75, 90, 105, 120, 135]
+            is_bright_frame = 40 <= frame_number <= 85  # Hardcoded bright region
+            
+            debug_enabled = frame_number in debug_frames or is_bright_frame
+            pupil_result = self.detect_pupil(frame, iris_result, debug=debug_enabled, frame_number=frame_number, last_pupil_result=last_pupil_result)
             if pupil_result is None:
                 failed_count += 1
                 continue
@@ -1540,6 +1609,9 @@ class CleanVideoPupilTracker:
             if pupil_radius <= 0:
                 failed_count += 1
                 continue
+            
+            # Update last_pupil_result for temporal constraints
+            last_pupil_result = pupil_result
             
             # Store tracking data with error handling
             try:
