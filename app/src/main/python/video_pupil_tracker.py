@@ -1097,8 +1097,8 @@ class CleanVideoPupilTracker:
                                                     baseline_intensity, None, None, None, frame_number)
             return None
         
-        # Find largest cluster
-        largest_cluster_points, all_labels = self.find_largest_cluster(dark_coords)
+        # Find best cluster (prioritizing proximity to iris center)
+        largest_cluster_points, all_labels = self.find_largest_cluster(dark_coords, iris_center)
         
         if largest_cluster_points is None:
             if debug:
@@ -1193,6 +1193,13 @@ class CleanVideoPupilTracker:
         
         # 6. Parameters text
         params_img = np.zeros((target_size[1], target_size[0], 3), dtype=np.uint8)
+        # Calculate cluster center distance from iris center for debug info
+        cluster_center_distance = "N/A"
+        if cluster_points is not None and len(cluster_points) > 0:
+            cluster_center = np.mean(cluster_points, axis=0)
+            cluster_center_distance = np.sqrt((cluster_center[0] - iris_center[0])**2 + (cluster_center[1] - iris_center[1])**2)
+            cluster_center_distance = f"{cluster_center_distance:.1f}"
+        
         params_text = [
             f"Frame: {frame_number}",
             f"Iris Center: ({iris_center[0]}, {iris_center[1]})",
@@ -1200,6 +1207,7 @@ class CleanVideoPupilTracker:
             f"Baseline Intensity: {baseline_intensity:.1f}",
             f"Dark Pixels: {len(dark_coords[0]) if dark_coords is not None else 0}",
             f"Cluster Points: {len(cluster_points) if cluster_points is not None else 0}",
+            f"Cluster Dist from Iris: {cluster_center_distance}",
             f"Pupil Radius: {pupil_circle['radius'] if pupil_circle is not None else 'N/A'}",
             f"Pupil Center: ({pupil_circle['center'][0] if pupil_circle is not None else 'N/A'}, {pupil_circle['center'][1] if pupil_circle is not None else 'N/A'})"
         ]
@@ -1364,8 +1372,8 @@ class CleanVideoPupilTracker:
         
         return expanded_coords
     
-    def find_largest_cluster(self, dark_coords):
-        """Find the largest cluster of dark pixels using OpenCV connected components"""
+    def find_largest_cluster(self, dark_coords, iris_center):
+        """Find the best cluster of dark pixels using OpenCV connected components, prioritizing clusters closer to iris center"""
         if len(dark_coords[0]) == 0:
             return None, None
         
@@ -1385,32 +1393,48 @@ class CleanVideoPupilTracker:
         # Use OpenCV connected components to find clusters
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
         
-        # Find the largest cluster (excluding background with label 0)
+        # Find the best cluster (excluding background with label 0)
         if num_labels <= 1:  # Only background
             return None, None
         
-        # Find largest cluster by area
-        largest_cluster_label = 1  # Start with first non-background component
-        largest_area = stats[1, cv2.CC_STAT_AREA]
+        # Score each cluster based on area and distance from iris center
+        best_cluster_label = None
+        best_score = -1
         
-        for label in range(2, num_labels):
+        for label in range(1, num_labels):  # Skip background (label 0)
             area = stats[label, cv2.CC_STAT_AREA]
-            if area > largest_area:
-                largest_area = area
-                largest_cluster_label = label
+            
+            # Filter out very small clusters (less than 50 pixels)
+            if area < 50:
+                continue
+            
+            # Get cluster centroid (relative to mask coordinates)
+            centroid_x = centroids[label][0] + min_x  # Convert to original image coordinates
+            centroid_y = centroids[label][1] + min_y
+            
+            # Calculate distance from iris center
+            distance_from_iris = np.sqrt((centroid_x - iris_center[0])**2 + (centroid_y - iris_center[1])**2)
+            
+            # Score combines area (larger is better) and proximity to iris center (closer is better)
+            # Normalize area by dividing by 1000 to balance with distance
+            # Lower distance is better, so we use negative distance
+            score = (area / 1000.0) - (distance_from_iris / 10.0)
+            
+            if score > best_score:
+                best_score = score
+                best_cluster_label = label
         
-        # Filter out small clusters (less than 50 pixels)
-        if largest_area < 50:
+        if best_cluster_label is None:
             return None, None
         
-        # Get points in the largest cluster
-        cluster_mask = (labels == largest_cluster_label)
+        # Get points in the best cluster
+        cluster_mask = (labels == best_cluster_label)
         cluster_y, cluster_x = np.where(cluster_mask)
         
         # Convert back to original coordinates
         cluster_points = np.column_stack((cluster_x + min_x, cluster_y + min_y))
         
-        # Create labels array for compatibility (all points in largest cluster get label 0, others -1)
+        # Create labels array for compatibility (all points in best cluster get label 0, others -1)
         point_labels = np.full(len(points), -1)
         for i, (px, py) in enumerate(points):
             if cluster_mask[py - min_y, px - min_x]:
