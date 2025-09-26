@@ -1443,19 +1443,20 @@ class CleanVideoPupilTracker:
         return cluster_points, point_labels
     
     def find_radius_around_iris_center(self, cluster_points, iris_center):
-        """Find radius around iris center that encompasses the cluster"""
+        """Find the best circle around the cluster using minEnclosingCircle"""
         if len(cluster_points) == 0:
             return None
         
-        # Calculate distances from iris center to all cluster points
-        distances = np.sqrt(np.sum((cluster_points - iris_center)**2, axis=1))
+        # Convert points to the format expected by minEnclosingCircle
+        # minEnclosingCircle expects points as (x, y) coordinates
+        points_for_circle = cluster_points.astype(np.float32)
         
-        # Use 90th percentile as radius to avoid outliers
-        radius = int(np.percentile(distances, 90))
+        # Use OpenCV's minEnclosingCircle to find the best circle
+        (center_x, center_y), radius = cv2.minEnclosingCircle(points_for_circle)
         
         return {
-            'center': iris_center,
-            'radius': radius
+            'center': (int(center_x), int(center_y)),
+            'radius': int(radius)
         }
     
     def process_video(self):
