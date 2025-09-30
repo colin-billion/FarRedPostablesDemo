@@ -400,8 +400,12 @@ class CleanVideoPupilTracker:
 
     def preprocess_frame(self, frame):
         """Apply preprocessing before circle detection."""
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.medianBlur(gray, 5)
+        red = frame[:, :, 2]  # Extract red channel
+        
+        # Skip histogram equalization for iris detection (too slow)
+        # hist_eq = cv2.equalizeHist(red)
+        
+        blurred = cv2.medianBlur(red, 5)
 
         # CLAHE for local contrast
         clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
@@ -412,6 +416,220 @@ class CleanVideoPupilTracker:
         sharpened = cv2.addWeighted(enhanced, 1.5, gaussian, -0.5, 0)
 
         return sharpened
+
+    def apply_localized_histogram_equalization(self, image, iris_center, iris_radius):
+        """Apply histogram equalization only to the iris region for better pupil contrast"""
+        # Create a mask for the iris region
+        mask = np.zeros(image.shape, dtype=np.uint8)
+        cv2.circle(mask, iris_center, iris_radius, 255, -1)
+        
+        # Create a copy of the image
+        result = image.copy()
+        
+        # Extract the iris region
+        iris_region = image[mask > 0]
+        
+        if len(iris_region) > 0:
+            # Apply histogram equalization to the iris region only
+            hist_eq_region = cv2.equalizeHist(iris_region)
+            
+            # Put the equalized region back into the result
+            result[mask > 0] = hist_eq_region.ravel()
+        
+        return result
+
+    def adaptive_threshold_with_bimodal(self, iris_pixels, baseline_intensity):
+        """Adaptive threshold: try bimodal detection first, fallback to brightness-based percentages"""
+        from scipy.signal import find_peaks
+        from scipy.ndimage import gaussian_filter1d
+        
+        darkest_pixel = np.min(iris_pixels)
+        darkness_range = baseline_intensity - darkest_pixel
+        
+        # Disabled peak-based thresholding for now
+        # if darkest_pixel < 100:
+        #     first_max_min_threshold = self.find_first_max_then_min_threshold(iris_pixels)
+        #     if first_max_min_threshold is not None:
+        #         return first_max_min_threshold
+        
+        # Fallback to brightness-based thresholds
+        if darkest_pixel < 100:     # Dark scenes - 50%
+            percentage = 0.50
+        else:                       # Bright scenes - 80%
+            percentage = 0.80
+        
+        return darkest_pixel + (darkness_range * percentage)
+    
+    def detect_bimodal_and_find_minima(self, iris_pixels, baseline_intensity):
+        """Detect bimodal distribution and find local minima after first peak"""
+        from scipy.signal import find_peaks
+        from scipy.ndimage import gaussian_filter1d
+        
+        # Create histogram
+        hist, bins = np.histogram(iris_pixels, bins=50)
+        
+        # Smooth the histogram slightly to reduce noise
+        hist_smooth = gaussian_filter1d(hist.astype(float), sigma=1)
+        
+        # Find peaks - use different sensitivity based on brightness
+        darkest_pixel = np.min(iris_pixels)
+        if darkest_pixel < 50:
+            # More sensitive for dark scenes
+            min_height = 5
+            min_distance = 3
+        else:
+            # Less sensitive for brighter scenes
+            min_height = 10
+            min_distance = 5
+        
+        peaks, properties = find_peaks(hist_smooth, height=min_height, distance=min_distance)
+        
+        # Need at least 2 peaks for bimodal
+        if len(peaks) < 2:
+            return None
+        
+        # Find local minima after the first peak
+        first_peak_idx = peaks[0]
+        minima_threshold = self.find_minima_after_peak(hist_smooth, bins, first_peak_idx)
+        
+        return minima_threshold
+    
+    def find_minima_after_peak(self, hist_smooth, bins, first_peak_idx):
+        """Find local minima after the first peak"""
+        # Look in the region after the first peak
+        search_start = first_peak_idx + 2  # Skip a few bins after peak
+        search_end = min(first_peak_idx + 20, len(hist_smooth) - 1)  # Don't go too far
+        
+        if search_start >= search_end:
+            return None
+        
+        search_region = hist_smooth[search_start:search_end]
+        search_bins = bins[search_start:search_end]
+        
+        # Find the first significant minimum
+        for i in range(1, len(search_region) - 1):
+            if (search_region[i] < search_region[i-1] and 
+                search_region[i] < search_region[i+1] and
+                search_region[i] < hist_smooth[first_peak_idx] * 0.5):  # Must be significantly lower than peak
+                return search_bins[i]
+        
+        return None
+
+    def find_first_max_then_min_threshold(self, iris_pixels):
+        """Find first two maxima starting from darkest pixel, then second minimum after that"""
+        from scipy.ndimage import gaussian_filter1d
+        
+        # Create histogram
+        hist, bins = np.histogram(iris_pixels, bins=50)
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+        
+        # Smooth the histogram
+        hist_smooth = gaussian_filter1d(hist.astype(float), sigma=1)
+        
+        # Find the darkest pixel bin index
+        darkest_pixel = np.min(iris_pixels)
+        darkest_bin_idx = np.argmin(np.abs(bin_centers - darkest_pixel))
+        
+        # Start from darkest pixel and find first maximum
+        first_max_idx = None
+        for i in range(darkest_bin_idx, len(hist_smooth) - 1):
+            if (hist_smooth[i] > hist_smooth[i-1] and 
+                hist_smooth[i] > hist_smooth[i+1] and
+                hist_smooth[i] > hist_smooth[darkest_bin_idx] * 1.2):  # Must be significantly higher than darkest
+                first_max_idx = i
+                break
+        
+        if first_max_idx is None:
+            return None
+        
+        # Find second maximum after the first maximum
+        second_max_idx = None
+        for i in range(first_max_idx + 1, len(hist_smooth) - 1):
+            if (hist_smooth[i] > hist_smooth[i-1] and 
+                hist_smooth[i] > hist_smooth[i+1] and
+                hist_smooth[i] > hist_smooth[first_max_idx] * 0.8):  # Must be reasonably high compared to first max
+                second_max_idx = i
+                break
+        
+        if second_max_idx is None:
+            # If no second maximum found, use first minimum after first maximum
+            for i in range(first_max_idx + 1, len(hist_smooth) - 1):
+                if (hist_smooth[i] < hist_smooth[i-1] and 
+                    hist_smooth[i] < hist_smooth[i+1]):
+                    return bin_centers[i]
+            return None
+        
+        # Use the second maximum (iris peak) as the threshold
+        second_max_threshold = bin_centers[second_max_idx]
+        
+        # Check if second maximum is too high (larger than default threshold)
+        # Calculate default threshold as fallback
+        baseline_intensity = np.mean(iris_pixels)  # Approximate baseline
+        darkness_range = baseline_intensity - darkest_pixel
+        default_threshold = baseline_intensity - (darkness_range * 0.1)  # 10% fallback
+        
+        if second_max_threshold > default_threshold:
+            return default_threshold
+        else:
+            return second_max_threshold
+
+    def create_darkness_histogram(self, iris_pixels, baseline_intensity, threshold_core, target_size):
+        """Create histogram visualization of pixel darkness values with smoothed version"""
+        import matplotlib.pyplot as plt
+        import matplotlib
+        from scipy.ndimage import gaussian_filter1d
+        matplotlib.use('Agg')  # Use non-interactive backend
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(4, 3))
+        
+        # Create histogram
+        hist, bins = np.histogram(iris_pixels, bins=50)
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+        
+        # Plot original histogram
+        ax.bar(bin_centers, hist, alpha=0.3, color='blue', width=bins[1]-bins[0], label='Original')
+        
+        # Create and plot smoothed histogram
+        hist_smooth = gaussian_filter1d(hist.astype(float), sigma=1)
+        ax.plot(bin_centers, hist_smooth, color='red', linewidth=2, label='Smoothed')
+        
+        # Add vertical lines for key values
+        ax.axvline(baseline_intensity, color='green', linestyle='--', linewidth=2, label=f'Baseline: {baseline_intensity:.1f}')
+        ax.axvline(threshold_core, color='red', linestyle='-', linewidth=2, label=f'Threshold: {threshold_core:.1f}')
+        
+        # Calculate statistics
+        darkest_pixel = np.min(iris_pixels)
+        darkness_range = baseline_intensity - darkest_pixel
+        percentage_used = ((baseline_intensity - threshold_core) / darkness_range) * 100 if darkness_range > 0 else 0
+        
+        # Add text annotations
+        ax.text(0.02, 0.98, f'Darkest: {darkest_pixel:.1f}', transform=ax.transAxes, 
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        ax.text(0.02, 0.88, f'Range: {darkness_range:.1f}', transform=ax.transAxes, 
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        ax.text(0.02, 0.78, f'Using: {percentage_used:.1f}%', transform=ax.transAxes, 
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        # Formatting
+        ax.set_xlabel('Pixel Intensity')
+        ax.set_ylabel('Count')
+        ax.set_title('Darkness Distribution (Original + Smoothed)')
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # Convert to image
+        fig.canvas.draw()
+        buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+        buf = buf.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+        # Convert RGBA to RGB
+        buf = buf[:, :, :3]
+        
+        plt.close(fig)
+        
+        # Resize to match target size
+        histogram_img = cv2.resize(buf, target_size)
+        return histogram_img
 
     def detect_iris_circles(self, frame, r_min, r_max):
         """Run HoughCircles on a preprocessed frame with radius filtering."""
@@ -1074,15 +1292,19 @@ class CleanVideoPupilTracker:
         iris_center = iris_result['center']
         iris_radius = iris_result['radius']
         
-        # Preprocess for pupil detection
+        # Preprocess for pupil detection - use red channel only
         if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            red = image[:, :, 2]  # Extract red channel
+            red_bgr = cv2.merge([red, red, red])  # Convert to 3-channel for consistency
+            gray = red  # Use red channel as grayscale
         else:
             gray = image.copy()
         
         # Apply CLAHE for local contrast enhancement
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
+        
+        # No histogram equalization - just use red channel + CLAHE
         
         # Get iris baseline intensity from circle 40 pixels inside iris
         baseline_intensity = self.get_iris_baseline_intensity(enhanced, iris_center, iris_radius)
@@ -1094,7 +1316,7 @@ class CleanVideoPupilTracker:
         if len(dark_coords[0]) == 0:
             if debug:
                 self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
-                                                    baseline_intensity, None, None, None, frame_number)
+                                                    baseline_intensity, None, None, None, frame_number, threshold_used)
             return None
         
         # Find best cluster (prioritizing proximity to iris center)
@@ -1103,7 +1325,7 @@ class CleanVideoPupilTracker:
         if largest_cluster_points is None:
             if debug:
                 self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
-                                                    baseline_intensity, dark_coords, None, None, frame_number)
+                                                    baseline_intensity, dark_coords, None, None, frame_number, threshold_used)
             return None
         
         # Find radius around iris center
@@ -1111,12 +1333,12 @@ class CleanVideoPupilTracker:
         
         if debug:
             self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
-                                                baseline_intensity, dark_coords, largest_cluster_points, pupil_circle, frame_number)
+                                                baseline_intensity, dark_coords, largest_cluster_points, pupil_circle, frame_number, threshold_used)
         
         return pupil_circle
     
     def create_pupil_debug_visualization(self, original, gray, enhanced, iris_center, iris_radius, 
-                                       baseline_intensity, dark_coords, cluster_points, pupil_circle, frame_number):
+                                       baseline_intensity, dark_coords, cluster_points, pupil_circle, frame_number, threshold_core=None):
         """Create comprehensive debug visualization for pupil detection"""
         import os
         
@@ -1135,9 +1357,20 @@ class CleanVideoPupilTracker:
         gray_resized = cv2.resize(gray, target_size)
         enhanced_resized = cv2.resize(enhanced, target_size)
         
+        # Create simple preprocessing comparison visualizations
+        # Red channel only (no processing)
+        red_only_resized = cv2.resize(gray, target_size)
+        
+        # Red channel + CLAHE (what we're actually using)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        red_clahe = clahe.apply(gray)
+        red_clahe_resized = cv2.resize(red_clahe, target_size)
+        
         # Convert grayscale to BGR for display
         gray_bgr = cv2.cvtColor(gray_resized, cv2.COLOR_GRAY2BGR)
         enhanced_bgr = cv2.cvtColor(enhanced_resized, cv2.COLOR_GRAY2BGR)
+        red_only_bgr = cv2.cvtColor(red_only_resized, cv2.COLOR_GRAY2BGR)
+        red_clahe_bgr = cv2.cvtColor(red_clahe_resized, cv2.COLOR_GRAY2BGR)
         
         # Scale coordinates to resized image
         scale_x = target_size[0] / w
@@ -1153,8 +1386,8 @@ class CleanVideoPupilTracker:
         cv2.circle(original_with_iris, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
         cv2.circle(original_with_iris, iris_center_scaled, 2, (0, 0, 255), 3)
         
-        # 2. Enhanced with iris circle and baseline circle
-        enhanced_with_circles = enhanced_bgr.copy()
+        # 2. Red+CLAHE with iris circle and baseline circle
+        enhanced_with_circles = red_clahe_bgr.copy()
         cv2.circle(enhanced_with_circles, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
         # Draw baseline circle (40 pixels inside iris)
         baseline_radius_scaled = int((iris_radius - 40) * min(scale_x, scale_y))
@@ -1227,27 +1460,45 @@ class CleanVideoPupilTracker:
         # Add white padding between images
         padding = 10
         white_padding = np.ones((target_size[1], padding, 3), dtype=np.uint8) * 255
-        white_padding_h = np.ones((padding, target_size[0] * 3 + padding * 2, 3), dtype=np.uint8) * 255
+        white_padding_h = np.ones((padding, target_size[0] * 4 + padding * 3, 3), dtype=np.uint8) * 255
         
-        # Create 3x2 grid
-        # Row 1: Original+Iris, Enhanced+Circles, Dark Pixels
-        row1 = np.hstack([original_with_iris, white_padding, enhanced_with_circles, white_padding, dark_pixels_img])
+        # Create comparison images with iris circles
+        red_only_with_circles = red_only_bgr.copy()
+        cv2.circle(red_only_with_circles, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
         
-        # Row 2: Cluster, Final Result, Parameters
-        row2 = np.hstack([cluster_img, white_padding, final_result, white_padding, params_img])
+        red_clahe_with_circles = red_clahe_bgr.copy()
+        cv2.circle(red_clahe_with_circles, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
+        
+        # Create 4x2 grid
+        # Row 1: Original+Iris, Red Channel Only, Red+CLAHE, Dark Pixels
+        row1 = np.hstack([original_with_iris, white_padding, red_only_with_circles, white_padding, 
+                         red_clahe_with_circles, white_padding, dark_pixels_img])
+        
+        # Create histogram visualization
+        if threshold_core is not None:
+            histogram_img = self.create_darkness_histogram(iris_pixels, baseline_intensity, threshold_core, target_size)
+        else:
+            # Fallback if threshold_core is not available
+            histogram_img = np.ones_like(params_img) * 128
+        
+        # Row 2: Cluster, Final Result, Parameters, Histogram
+        row2 = np.hstack([cluster_img, white_padding, final_result, white_padding, 
+                         params_img, white_padding, histogram_img])
         
         # Combine rows
         comprehensive = np.vstack([row1, white_padding_h, row2])
         
         # Add labels
         label_y = 20
-        cv2.putText(comprehensive, "Original+Iris", (10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
-        cv2.putText(comprehensive, "Enhanced+Circles", (target_size[0] + padding + 10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
-        cv2.putText(comprehensive, "Dark Pixels", (2 * (target_size[0] + padding) + 10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Original+Iris", (10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Red Channel Only", (target_size[0] + padding + 10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Red+CLAHE", (2 * (target_size[0] + padding) + 10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Dark Pixels", (3 * (target_size[0] + padding) + 10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
         
-        cv2.putText(comprehensive, "Cluster", (10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
-        cv2.putText(comprehensive, "Final Result", (target_size[0] + padding + 10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
-        cv2.putText(comprehensive, "Parameters", (2 * (target_size[0] + padding) + 10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Cluster", (10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Final Result", (target_size[0] + padding + 10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Parameters", (2 * (target_size[0] + padding) + 10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Darkness Histogram", (3 * (target_size[0] + padding) + 10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
         
         # Save comprehensive visualization
         debug_path = f"{debug_dir}/pupil_debug_frame_{frame_number:03d}.jpg"
@@ -1298,7 +1549,7 @@ class CleanVideoPupilTracker:
         iris_mask = np.zeros(image.shape, dtype=np.uint8)
         cv2.circle(iris_mask, (x, y), max_pupil_radius, 255, -1)
         
-        # Get all pixels within iris area
+        # Get all pixels within iris area for statistics
         iris_pixels = image[iris_mask > 0]
         
         if len(iris_pixels) == 0:
@@ -1308,15 +1559,12 @@ class CleanVideoPupilTracker:
         iris_mean = np.mean(iris_pixels)
         iris_std = np.std(iris_pixels)
         
-        # Use very strict threshold for bright region (frames 40-85)
-        if 40 <= frame_number <= 85:  # Bright region - very strict threshold
-            # Extremely strict: only very dark pixels (hardcoded low value)
-            threshold_core = 50  # Very low threshold for bright region
-        else:  # Outside bright region - use adaptive threshold
-            if iris_mean > 100:  # Medium brightness
-                threshold_core = iris_mean - iris_std
-            else:  # Dark scene
-                threshold_core = baseline_intensity * 0.8
+        # Adaptive threshold: try bimodal detection first, fallback to brightness-based
+        threshold_core = self.adaptive_threshold_with_bimodal(iris_pixels, baseline_intensity)
+        
+        # Debug: print threshold values for frame 7
+        if frame_number == 7:
+            print(f"Frame 7 Debug - Darkest pixel: {np.min(iris_pixels):.1f}, Baseline: {baseline_intensity:.1f}, Threshold: {threshold_core:.1f}")
         
         # Ensure threshold is reasonable (not too low)
         threshold_core = max(threshold_core, 30)  # Minimum threshold of 30
@@ -1594,8 +1842,8 @@ class CleanVideoPupilTracker:
             iris_result = self.fixed_iris
             
             # Detect pupil using current iris (enable debug for specific frames)
-            # Enable debug for specific frames and bright region (frames 40-85)
-            debug_frames = [0, 15, 30, 45, 60, 75, 90, 105, 120, 135]
+            # Enable debug for every 30 frames, bright region (frames 40-85), and frame 7
+            debug_frames = list(range(0, 144, 30)) + [7]  # Every 30 frames: 0, 30, 60, 90, 120 + frame 7
             is_bright_frame = 40 <= frame_number <= 85  # Hardcoded bright region
             
             debug_enabled = frame_number in debug_frames or is_bright_frame
