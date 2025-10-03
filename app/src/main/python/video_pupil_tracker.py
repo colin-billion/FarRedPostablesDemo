@@ -1300,51 +1300,302 @@ class CleanVideoPupilTracker:
         else:
             gray = image.copy()
         
-        # Apply CLAHE for local contrast enhancement
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
+        # Use red channel only (no CLAHE preprocessing)
+        enhanced = gray
         
-        # No histogram equalization - just use red channel + CLAHE
+        # No histogram equalization - just use red channel only
         
         # Get iris baseline intensity from circle 40 pixels inside iris
         baseline_intensity = self.get_iris_baseline_intensity(enhanced, iris_center, iris_radius)
         
-        # Find dark pixels with adaptive thresholding
-        dark_coords, threshold_used = self.find_dark_pixels_adaptive(
-            enhanced, iris_center, iris_radius, baseline_intensity, frame_number)
+        # Try darkness-based contour detection on red channel only
+        pupil_circle = self.detect_pupil_by_darkness(enhanced, iris_center, iris_radius, frame_number, last_pupil_result)
         
-        if len(dark_coords[0]) == 0:
+        if pupil_circle is None:
             if debug:
                 self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
-                                                    baseline_intensity, None, None, None, frame_number, threshold_used)
+                                                    baseline_intensity, None, None, None, frame_number, None)
             return None
-        
-        # Find best cluster (prioritizing proximity to iris center)
-        largest_cluster_points, all_labels = self.find_largest_cluster(dark_coords, iris_center)
-        
-        if largest_cluster_points is None:
-            if debug:
-                self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
-                                                    baseline_intensity, dark_coords, None, None, frame_number, threshold_used)
-            return None
-        
-        # Find radius around iris center
-        pupil_circle = self.find_radius_around_iris_center(largest_cluster_points, iris_center, iris_radius, frame_number, last_pupil_result)
         
         if debug:
             self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
-                                                baseline_intensity, dark_coords, largest_cluster_points, pupil_circle, frame_number, threshold_used)
+                                                baseline_intensity, None, None, pupil_circle, frame_number, None)
         
         return pupil_circle
+    
+    def detect_pupil_by_darkness(self, frame, iris_circle, iris_radius, frame_number, last_pupil_result, debug=False):
+        """
+        Detect pupil inside iris using darkness scoring.
+        
+        Args:
+            frame (ndarray): Grayscale image (already enhanced red-channel).
+            iris_circle (tuple): (x, y) for iris center.
+            iris_radius (int): Iris radius.
+            frame_number (int): Current frame number.
+            last_pupil_result (dict): Previous pupil result for temporal constraints.
+            debug (bool): If True, show intermediate results.
+        
+        Returns:
+            dict: {'center': (x, y), 'radius': r, 'score': score} or None
+        """
+        cx, cy = iris_circle
+        r_iris = iris_radius
+
+        # Crop ROI around iris
+        x1, y1 = max(cx - r_iris, 0), max(cy - r_iris, 0)
+        x2, y2 = min(cx + r_iris, frame.shape[1]), min(cy + r_iris, frame.shape[0])
+        roi = frame[y1:y2, x1:x2].copy()
+
+        # Use OTSU thresholding
+        _, thresh = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # Clean up the thresholded image with morphological operations
+        # Remove noise and fill gaps
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        thresh_cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        thresh_cleaned = cv2.morphologyEx(thresh_cleaned, cv2.MORPH_OPEN, kernel)
+        
+        # Find contours in cleaned thresholded ROI
+        contours, _ = cv2.findContours(thresh_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Debug output
+        if frame_number in [0, 7, 30, 40, 60, 90, 120]:
+            print(f"Frame {frame_number}: Found {len(contours)} contours")
+
+        best_circle = None
+        best_score = float("inf")
+        debug_output = cv2.cvtColor(roi, cv2.COLOR_GRAY2BGR)
+        
+        # Debug: track blob sizes
+        valid_blobs = 0
+        blob_sizes = []
+
+        for cnt in contours:
+            (px, py), pr = cv2.minEnclosingCircle(cnt)
+            px, py, pr = int(px), int(py), int(pr)
+
+            blob_sizes.append(pr)
+            
+            if pr < 8:   # too tiny (noise)
+                continue
+            if pr > r_iris * 0.7:  # too big to be pupil
+                continue
+                
+            valid_blobs += 1
+
+            # Mask for this blob
+            mask = np.zeros_like(roi, dtype=np.uint8)
+            cv2.drawContours(mask, [cnt], -1, 255, -1)
+
+            # Compute mean intensity of blob
+            mean_intensity = cv2.mean(roi, mask=mask)[0]
+
+            # Distance from iris center (relative to ROI)
+            dist = np.hypot((px + x1) - cx, (py + y1) - cy)
+
+            # Score: mostly darkness, with penalties for off-center
+            score = mean_intensity + 0.2 * dist
+
+            if score < best_score:
+                best_score = score
+                best_circle = (px + x1, py + y1, pr)
+
+            if debug:
+                cv2.circle(debug_output, (px, py), pr, (0, 255, 0), 1)
+                cv2.putText(debug_output, f"{mean_intensity:.1f}", (px, py),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+        
+        # Debug output for blob sizes
+        if frame_number in [0, 7, 30, 40, 60, 90, 120]:
+            if blob_sizes:
+                print(f"  All blob sizes: {sorted(blob_sizes)[:10]} (showing first 10)")
+                print(f"  Valid blobs (8-{int(r_iris*0.7)}px): {valid_blobs}")
+                if valid_blobs > 0:
+                    valid_sizes = [s for s in blob_sizes if 8 <= s <= r_iris * 0.7]
+                    print(f"  Valid blob sizes: {valid_sizes}")
+            else:
+                print(f"  No blobs found")
+
+        # Apply temporal constraints if we have previous result
+        if best_circle is not None and last_pupil_result is not None and isinstance(last_pupil_result, dict):
+            last_x, last_y = last_pupil_result['center']
+            last_r = last_pupil_result['radius']
+            bx, by, br = best_circle
+            
+            # Constrain center movement (max 10 pixels)
+            center_distance = np.sqrt((bx - last_x)**2 + (by - last_y)**2)
+            if center_distance > 10:
+                # Use iris center if too far from last pupil center
+                bx, by = iris_circle
+            
+            # Constrain radius change (max 5 pixels from last pupil radius)
+            br = max(5, min(br, last_r + 5))
+            br = max(br, last_r - 5)
+            
+            best_circle = (bx, by, br)
+
+        # Convert to dictionary format expected by main processing loop
+        if best_circle is not None:
+            bx, by, br = best_circle
+            return {
+                'center': (bx, by),
+                'radius': br,
+                'score': best_score
+            }
+        else:
+            return None
+        
+    def detect_pupil_hough_circles(self, enhanced, iris_center, iris_radius, frame_number, last_pupil_result):
+        """Detect pupil using Hough circles on red channel + CLAHE image"""
+        x, y = iris_center
+        
+        # Debug: print frame number and iris info
+        if frame_number == 0:
+            print(f"Debug - Frame {frame_number}: Iris center=({x}, {y}), radius={iris_radius}")
+            print(f"Debug - Last pupil result type: {type(last_pupil_result)}, value: {last_pupil_result}")
+            if last_pupil_result is not None:
+                print(f"Debug - Last pupil result length: {len(last_pupil_result) if hasattr(last_pupil_result, '__len__') else 'N/A'}")
+        
+        # Define pupil radius constraints (must be inside iris and smaller)
+        min_pupil_radius = 10
+        max_pupil_radius = int(iris_radius * 0.6)  # Max 60% of iris radius
+        
+        # Apply temporal constraints if we have previous result
+        if last_pupil_result is not None and isinstance(last_pupil_result, dict):
+            last_x, last_y = last_pupil_result['center']
+            last_r = last_pupil_result['radius']
+            
+            # Constrain center movement (max 10 pixels)
+            center_distance = np.sqrt((x - last_x)**2 + (y - last_y)**2)
+            if center_distance > 10:
+                # Use iris center if too far from last pupil center
+                x, y = iris_center
+            
+            # Constrain radius change (max 5 pixels from last pupil radius)
+            max_pupil_radius = min(max_pupil_radius, last_r + 5)
+            min_pupil_radius = max(min_pupil_radius, last_r - 5)
+        
+        # Run Hough circles detection
+        circles = cv2.HoughCircles(
+            enhanced,
+            cv2.HOUGH_GRADIENT,
+            dp=1,
+            minDist=iris_radius,  # Minimum distance between circle centers
+            param1=50,            # Upper threshold for edge detection
+            param2=30,            # Accumulator threshold for center detection
+            minRadius=min_pupil_radius,
+            maxRadius=max_pupil_radius
+        )
+        
+        if circles is None:
+            if frame_number == 0:
+                print(f"Debug - No circles found in frame {frame_number}")
+            return None
+        
+        circles = np.round(circles[0, :]).astype("int")
+        if frame_number == 0:
+            print(f"Debug - Found {len(circles)} circles in frame {frame_number}")
+            print(f"Debug - Circles shape: {circles.shape}")
+            print(f"Debug - First circle: {circles[0] if len(circles) > 0 else 'None'}")
+        
+        # Filter circles that are inside the iris and score them
+        valid_circles = []
+        iris_x, iris_y = iris_center
+        if frame_number == 0:
+            print(f"Debug - Processing {len(circles)} circles, iris_center=({iris_x}, {iris_y}), iris_radius={iris_radius}")
+        
+        try:
+            for i, (cx, cy, cr) in enumerate(circles):
+                if frame_number == 0 and i < 3:  # Debug first 3 circles
+                    print(f"Debug - Circle {i}: center=({cx}, {cy}), radius={cr}")
+                
+                # Check if circle center is inside iris
+                distance_from_iris_center = np.sqrt((cx - iris_x)**2 + (cy - iris_y)**2)
+                if distance_from_iris_center + cr <= iris_radius:
+                    if frame_number == 0 and i < 3:
+                        print(f"Debug - Circle {i} is inside iris, scoring...")
+                    # Score the circle based on darkness and proximity to iris center
+                    try:
+                        score = self.score_pupil_circle(enhanced, (cx, cy), cr, iris_center)
+                        valid_circles.append(((cx, cy, cr), score))
+                        if frame_number == 0 and i < 3:
+                            print(f"Debug - Circle {i} score: {score}")
+                    except Exception as e:
+                        print(f"Debug - Error scoring circle {i}: {e}")
+                        continue
+        except Exception as e:
+            print(f"Debug - Error in for loop: {e}")
+            print(f"Debug - Circles type: {type(circles)}")
+            print(f"Debug - Circles content: {circles}")
+            raise
+        
+        if not valid_circles:
+            return None
+        
+        # Select the best circle (highest score)
+        print(f"Debug - valid_circles: {valid_circles}")
+        print(f"Debug - First valid circle: {valid_circles[0] if valid_circles else 'None'}")
+        best_circle, best_score = max(valid_circles, key=lambda x: x[1])
+        print(f"Debug - best_circle: {best_circle}, best_score: {best_score}")
+        
+        # Convert tuple to dictionary format expected by main processing loop
+        x, y, r = best_circle
+        return {
+            'center': (x, y),
+            'radius': r,
+            'score': best_score
+        }
+    
+    def score_pupil_circle(self, image, center, radius, iris_center):
+        """Score a potential pupil circle based on darkness and position"""
+        x, y = center
+        print(f"Debug - Scoring circle: center=({x}, {y}), radius={radius}, iris_center={iris_center}")
+        print(f"Debug - iris_center type: {type(iris_center)}")
+        if hasattr(iris_center, '__len__'):
+            print(f"Debug - iris_center length: {len(iris_center)}")
+        
+        # Create mask for the circle
+        mask = np.zeros(image.shape, dtype=np.uint8)
+        cv2.circle(mask, (x, y), radius, 255, -1)
+        
+        # Calculate average intensity inside the circle (lower = better)
+        circle_pixels = image[mask > 0]
+        if len(circle_pixels) == 0:
+            return 0
+        
+        avg_intensity = np.mean(circle_pixels)
+        darkness_score = 255 - avg_intensity  # Higher score for darker circles
+        
+        # Calculate proximity score (closer to iris center = better)
+        print(f"Debug - About to unpack iris_center: {iris_center}")
+        iris_x, iris_y = iris_center
+        print(f"Debug - Unpacked: iris_x={iris_x}, iris_y={iris_y}")
+        distance_from_iris = np.sqrt((x - iris_x)**2 + (y - iris_y)**2)
+        max_distance = 100  # Use a fixed maximum distance for scoring
+        proximity_score = max(0, max_distance - distance_from_iris) / max_distance * 100
+        
+        # Combine scores (weighted)
+        total_score = darkness_score * 0.7 + proximity_score * 0.3
+        
+        return total_score
     
     def create_pupil_debug_visualization(self, original, gray, enhanced, iris_center, iris_radius, 
                                        baseline_intensity, dark_coords, cluster_points, pupil_circle, frame_number, threshold_core=None):
         """Create comprehensive debug visualization for pupil detection"""
         import os
         
+        # Debug: check iris_center type
+        print(f"Debug - Debug viz: iris_center type: {type(iris_center)}, value: {iris_center}")
+        if hasattr(iris_center, '__len__'):
+            print(f"Debug - Debug viz: iris_center length: {len(iris_center)}")
+        
         # Create debug directory
         debug_dir = os.path.join(self.output_dir, "pupil_debug")
         os.makedirs(debug_dir, exist_ok=True)
+        
+        # Create red channel + CLAHE debug directory
+        red_clahe_dir = os.path.join(self.output_dir, "red_clahe_debug")
+        os.makedirs(red_clahe_dir, exist_ok=True)
         
         # Calculate target size maintaining aspect ratio
         h, w = original.shape[:2]
@@ -1361,7 +1612,10 @@ class CleanVideoPupilTracker:
         # Red channel only (no processing)
         red_only_resized = cv2.resize(gray, target_size)
         
-        # Red channel + CLAHE (what we're actually using)
+        # Red channel only (what we're actually using now)
+        red_only_actual_resized = cv2.resize(enhanced, target_size)
+        
+        # Red channel + CLAHE (for comparison)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         red_clahe = clahe.apply(gray)
         red_clahe_resized = cv2.resize(red_clahe, target_size)
@@ -1370,6 +1624,7 @@ class CleanVideoPupilTracker:
         gray_bgr = cv2.cvtColor(gray_resized, cv2.COLOR_GRAY2BGR)
         enhanced_bgr = cv2.cvtColor(enhanced_resized, cv2.COLOR_GRAY2BGR)
         red_only_bgr = cv2.cvtColor(red_only_resized, cv2.COLOR_GRAY2BGR)
+        red_only_actual_bgr = cv2.cvtColor(red_only_actual_resized, cv2.COLOR_GRAY2BGR)
         red_clahe_bgr = cv2.cvtColor(red_clahe_resized, cv2.COLOR_GRAY2BGR)
         
         # Scale coordinates to resized image
@@ -1463,15 +1718,15 @@ class CleanVideoPupilTracker:
         white_padding_h = np.ones((padding, target_size[0] * 4 + padding * 3, 3), dtype=np.uint8) * 255
         
         # Create comparison images with iris circles
-        red_only_with_circles = red_only_bgr.copy()
-        cv2.circle(red_only_with_circles, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
+        red_only_actual_with_circles = red_only_actual_bgr.copy()
+        cv2.circle(red_only_actual_with_circles, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
         
         red_clahe_with_circles = red_clahe_bgr.copy()
         cv2.circle(red_clahe_with_circles, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
         
         # Create 4x2 grid
         # Row 1: Original+Iris, Red Channel Only, Red+CLAHE, Dark Pixels
-        row1 = np.hstack([original_with_iris, white_padding, red_only_with_circles, white_padding, 
+        row1 = np.hstack([original_with_iris, white_padding, red_only_actual_with_circles, white_padding, 
                          red_clahe_with_circles, white_padding, dark_pixels_img])
         
         # Create histogram visualization
@@ -1504,6 +1759,15 @@ class CleanVideoPupilTracker:
         debug_path = f"{debug_dir}/pupil_debug_frame_{frame_number:03d}.jpg"
         cv2.imwrite(debug_path, comprehensive)
         print(f"📊 Pupil debug visualization saved: {debug_path}")
+        
+        # Save red channel only frame as separate JPG
+        red_clahe_filename = f"red_only_frame_{frame_number:03d}.jpg"
+        red_clahe_path = os.path.join(red_clahe_dir, red_clahe_filename)
+        
+        # Convert enhanced (red channel only) to BGR for saving
+        enhanced_bgr = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+        cv2.imwrite(red_clahe_path, enhanced_bgr)
+        print(f"📊 Red channel only frame saved: {red_clahe_path}")
     
     def calculate_circle_darkness(self, image, center, radius):
         """Calculate how dark a circle is (lower values = darker)"""
@@ -1785,7 +2049,7 @@ class CleanVideoPupilTracker:
                 ret, frame = self.cap.read()
                 if not ret:
                     break
-                
+                    
                 # Detect iris with radius filtering
                 circle = self.detect_iris_circles(frame, 110, 140)
                 if circle is not None:
@@ -1848,14 +2112,44 @@ class CleanVideoPupilTracker:
             
             debug_enabled = frame_number in debug_frames or is_bright_frame
             pupil_result = self.detect_pupil(frame, iris_result, debug=debug_enabled, frame_number=frame_number, last_pupil_result=last_pupil_result)
-            if pupil_result is None:
-                failed_count += 1
-                continue
             
-            # Validate pupil detection
-            pupil_radius = pupil_result['radius']
-            if pupil_radius <= 0:
+            # Check if pupil detection failed
+            pupil_detection_failed = False
+            if pupil_result is None:
+                pupil_detection_failed = True
                 failed_count += 1
+            else:
+                # Validate pupil detection
+                pupil_radius = pupil_result['radius']
+                if pupil_radius <= 0:
+                    pupil_detection_failed = True
+                    failed_count += 1
+            
+            # Always write frame to video (with or without pupil detection)
+            if pupil_detection_failed:
+                # Create visualization frame with iris only (no pupil)
+                vis_frame = self.create_visualization_frame(
+                    frame, iris_result, None, frame_number, frame_number / self.fps, 0
+                )
+            else:
+                # Create visualization frame with both iris and pupil
+                vis_frame = self.create_visualization_frame(
+                    frame, iris_result, pupil_result, frame_number, frame_number / self.fps, pupil_result['radius']
+                )
+            
+            # Write to output video
+            if self.video_writer and self.video_writer.isOpened():
+                try:
+                    self.video_writer.write(vis_frame)
+                    if frame_number % 30 == 0:  # Every 30 frames
+                        print(f"  Written frame {frame_number} to video")
+                except Exception as e:
+                    print(f"  Error writing frame {frame_number} to video: {e}")
+            elif self.video_writer:
+                print(f"  Video writer not opened, skipping frame {frame_number}")
+            
+            # Skip data processing for failed frames
+            if pupil_detection_failed:
                 continue
             
             # Update last_pupil_result for temporal constraints
@@ -1896,22 +2190,6 @@ class CleanVideoPupilTracker:
                 'iris_pupil_ratio': iris_pupil_ratio,
                 'detection_method': 'clean_debug_based'
             })
-            
-            # Create visualization frame with both iris and pupil
-            vis_frame = self.create_visualization_frame(
-                frame, iris_result, pupil_result, frame_number, timestamp, pupil_radius
-            )
-            
-            # Write to output video
-            if self.video_writer and self.video_writer.isOpened():
-                try:
-                    self.video_writer.write(vis_frame)
-                    if frame_number % 30 == 0:  # Every 30 frames
-                        print(f"  Written frame {frame_number} to video")
-                except Exception as e:
-                    print(f"  Error writing frame {frame_number} to video: {e}")
-            elif self.video_writer:
-                print(f"  Video writer not opened, skipping frame {frame_number}")
             
             processed_count += 1
             
