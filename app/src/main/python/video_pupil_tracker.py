@@ -1284,7 +1284,7 @@ class CleanVideoPupilTracker:
         return debug_path
     
     def detect_pupil(self, image, iris_result, debug=False, frame_number=0, last_pupil_result=None):
-        """Detect pupil using the original method that finds the full pupil boundary"""
+        """Detect pupil using dual-method approach with visualization"""
         if iris_result is None:
             return None
         
@@ -1292,6 +1292,43 @@ class CleanVideoPupilTracker:
         iris_center = iris_result['center']
         iris_radius = iris_result['radius']
         
+        # Method 1: Current darkness-based contour detection (red channel only)
+        pupil_method1 = self.detect_pupil_method1(image, iris_center, iris_radius, frame_number, last_pupil_result)
+        
+        # Method 2: Previous working method (CLAHE + adaptive thresholding)
+        pupil_method2 = self.detect_pupil_method2(image, iris_center, iris_radius, frame_number, last_pupil_result)
+        
+        # Create dual-method visualization if requested
+        if debug:
+            self.create_dual_method_debug_visualization(image, iris_center, iris_radius, 
+                                                      pupil_method1, pupil_method2, frame_number)
+        
+        # Combine methods: prefer Method 1 when available, fallback to Method 2
+        if pupil_method1 is not None:
+            # Method 1 succeeded - use it
+            primary_result = pupil_method1
+            method_used = 'method1'
+        elif pupil_method2 is not None:
+            # Method 1 failed, but Method 2 succeeded - use Method 2
+            primary_result = pupil_method2
+            method_used = 'method2'
+        else:
+            # Both methods failed
+            primary_result = None
+            method_used = 'none'
+        
+        # Store both methods for visualization
+        result = {
+            'method1': pupil_method1,
+            'method2': pupil_method2,
+            'primary': primary_result,
+            'method_used': method_used
+        }
+        
+        return result
+    
+    def detect_pupil_method1(self, image, iris_center, iris_radius, frame_number, last_pupil_result):
+        """Method 1: Current darkness-based contour detection (red channel only)"""
         # Preprocess for pupil detection - use red channel only
         if len(image.shape) == 3:
             red = image[:, :, 2]  # Extract red channel
@@ -1303,25 +1340,225 @@ class CleanVideoPupilTracker:
         # Use red channel only (no CLAHE preprocessing)
         enhanced = gray
         
-        # No histogram equalization - just use red channel only
+        # Try darkness-based contour detection on red channel only
+        pupil_circle = self.detect_pupil_by_darkness(enhanced, iris_center, iris_radius, frame_number, last_pupil_result)
+        
+        return pupil_circle
+    
+    def detect_pupil_method2(self, image, iris_center, iris_radius, frame_number, last_pupil_result):
+        """Method 2: Previous working method (CLAHE + adaptive thresholding)"""
+        # Preprocess for pupil detection - use CLAHE like the previous working version
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        # Apply CLAHE for local contrast enhancement (like previous working version)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
         
         # Get iris baseline intensity from circle 40 pixels inside iris
         baseline_intensity = self.get_iris_baseline_intensity(enhanced, iris_center, iris_radius)
         
-        # Try darkness-based contour detection on red channel only
-        pupil_circle = self.detect_pupil_by_darkness(enhanced, iris_center, iris_radius, frame_number, last_pupil_result)
+        # Find dark pixels with adaptive thresholding (previous working method)
+        dark_coords, threshold_used = self.find_dark_pixels_adaptive(
+            enhanced, iris_center, iris_radius, baseline_intensity, frame_number)
         
-        if pupil_circle is None:
-            if debug:
-                self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
-                                                    baseline_intensity, None, None, None, frame_number, None)
+        # Debug output for Method 2
+        if frame_number in [0, 7, 30, 40, 60, 90, 120]:
+            print(f"Method 2 Frame {frame_number}: Baseline={baseline_intensity:.1f}, Threshold={threshold_used:.1f}, Dark pixels={len(dark_coords[0])}")
+        
+        if len(dark_coords[0]) == 0:
             return None
         
-        if debug:
-            self.create_pupil_debug_visualization(image, gray, enhanced, iris_center, iris_radius, 
-                                                baseline_intensity, None, None, pupil_circle, frame_number, None)
+        # Find best cluster (prioritizing proximity to iris center)
+        largest_cluster_points, all_labels = self.find_largest_cluster(dark_coords, iris_center)
+        
+        if largest_cluster_points is None:
+            if frame_number in [0, 7, 30, 40, 60, 90, 120]:
+                print(f"Method 2 Frame {frame_number}: No valid cluster found")
+            return None
+        
+        # Find radius around iris center (previous method)
+        pupil_circle = self.find_radius_around_iris_center_method2(largest_cluster_points, iris_center)
+        
+        if frame_number in [0, 7, 30, 40, 60, 90, 120]:
+            print(f"Method 2 Frame {frame_number}: SUCCESS - Center={pupil_circle['center']}, Radius={pupil_circle['radius']}")
         
         return pupil_circle
+    
+    def find_radius_around_iris_center_method2(self, cluster_points, iris_center):
+        """Find radius around iris center that encompasses the cluster (previous method)"""
+        if len(cluster_points) == 0:
+            return None
+        
+        # Calculate distances from iris center to all cluster points
+        distances = np.sqrt(np.sum((cluster_points - iris_center)**2, axis=1))
+        
+        # Use 90th percentile as radius to avoid outliers
+        radius = int(np.percentile(distances, 90))
+        
+        return {
+            'center': iris_center,
+            'radius': radius
+        }
+    
+    def create_dual_method_debug_visualization(self, original, iris_center, iris_radius, pupil_method1, pupil_method2, frame_number):
+        """Create comprehensive debug visualization comparing both detection methods"""
+        import os
+        
+        # Create debug directory
+        debug_dir = os.path.join(self.output_dir, "dual_method_debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        # Calculate target size maintaining aspect ratio
+        h, w = original.shape[:2]
+        target_height = 300
+        target_width = int(w * target_height / h)
+        target_size = (target_width, target_height)
+        
+        # Resize original image
+        original_resized = cv2.resize(original, target_size)
+        
+        # Scale coordinates to resized image
+        scale_x = target_size[0] / w
+        scale_y = target_size[1] / h
+        
+        # Scale iris center and radius
+        iris_center_scaled = (int(iris_center[0] * scale_x), int(iris_center[1] * scale_y))
+        iris_radius_scaled = int(iris_radius * min(scale_x, scale_y))
+        
+        # Create visualization images
+        # 1. Original with iris circle
+        original_with_iris = original_resized.copy()
+        cv2.circle(original_with_iris, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
+        cv2.circle(original_with_iris, iris_center_scaled, 2, (0, 0, 255), 3)
+        
+        # 2. Method 1 result (Red channel only - BLUE circles)
+        method1_result = original_resized.copy()
+        cv2.circle(method1_result, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
+        if pupil_method1 is not None:
+            pupil_center_scaled = (int(pupil_method1['center'][0] * scale_x), 
+                                 int(pupil_method1['center'][1] * scale_y))
+            pupil_radius_scaled = int(pupil_method1['radius'] * min(scale_x, scale_y))
+            cv2.circle(method1_result, pupil_center_scaled, pupil_radius_scaled, (255, 0, 0), 3)  # Blue
+            cv2.circle(method1_result, pupil_center_scaled, 2, (255, 0, 0), -1)
+            cv2.putText(method1_result, f"M1: r={pupil_method1['radius']}", 
+                       (pupil_center_scaled[0] + 10, pupil_center_scaled[1] - 10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+        
+        # 3. Method 2 result (CLAHE + adaptive - YELLOW circles)
+        method2_result = original_resized.copy()
+        cv2.circle(method2_result, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
+        if pupil_method2 is not None:
+            pupil_center_scaled = (int(pupil_method2['center'][0] * scale_x), 
+                                 int(pupil_method2['center'][1] * scale_y))
+            pupil_radius_scaled = int(pupil_method2['radius'] * min(scale_x, scale_y))
+            cv2.circle(method2_result, pupil_center_scaled, pupil_radius_scaled, (0, 255, 255), 3)  # Yellow
+            cv2.circle(method2_result, pupil_center_scaled, 2, (0, 255, 255), -1)
+            cv2.putText(method2_result, f"M2: r={pupil_method2['radius']}", 
+                       (pupil_center_scaled[0] + 10, pupil_center_scaled[1] + 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        
+        # 4. Combined visualization (both methods on same image)
+        combined_result = original_resized.copy()
+        cv2.circle(combined_result, iris_center_scaled, iris_radius_scaled, (0, 255, 0), 2)
+        
+        # Draw Method 1 (Blue)
+        if pupil_method1 is not None:
+            pupil_center_scaled = (int(pupil_method1['center'][0] * scale_x), 
+                                 int(pupil_method1['center'][1] * scale_y))
+            pupil_radius_scaled = int(pupil_method1['radius'] * min(scale_x, scale_y))
+            cv2.circle(combined_result, pupil_center_scaled, pupil_radius_scaled, (255, 0, 0), 3)  # Blue
+            cv2.circle(combined_result, pupil_center_scaled, 2, (255, 0, 0), -1)
+            cv2.putText(combined_result, f"M1: r={pupil_method1['radius']}", 
+                       (pupil_center_scaled[0] + 10, pupil_center_scaled[1] - 10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+        
+        # Draw Method 2 (Yellow)
+        if pupil_method2 is not None:
+            pupil_center_scaled = (int(pupil_method2['center'][0] * scale_x), 
+                                 int(pupil_method2['center'][1] * scale_y))
+            pupil_radius_scaled = int(pupil_method2['radius'] * min(scale_x, scale_y))
+            cv2.circle(combined_result, pupil_center_scaled, pupil_radius_scaled, (0, 255, 255), 3)  # Yellow
+            cv2.circle(combined_result, pupil_center_scaled, 2, (0, 255, 255), -1)
+            cv2.putText(combined_result, f"M2: r={pupil_method2['radius']}", 
+                       (pupil_center_scaled[0] + 10, pupil_center_scaled[1] + 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        
+        # 5. Parameters text
+        params_img = np.zeros((target_size[1], target_size[0], 3), dtype=np.uint8)
+        
+        # Determine which method was used
+        if pupil_method1 is not None:
+            method_used = "METHOD 1 (Red Channel)"
+            primary_result = pupil_method1
+        elif pupil_method2 is not None:
+            method_used = "METHOD 2 (CLAHE + Adaptive)"
+            primary_result = pupil_method2
+        else:
+            method_used = "NONE (Both Failed)"
+            primary_result = None
+        
+        params_text = [
+            f"Frame: {frame_number}",
+            f"Iris Center: ({iris_center[0]}, {iris_center[1]})",
+            f"Iris Radius: {iris_radius}",
+            "",
+            "COMBINED LOGIC:",
+            f"  Selected: {method_used}",
+            f"  Center: {primary_result['center'] if primary_result is not None else 'N/A'}",
+            f"  Radius: {primary_result['radius'] if primary_result is not None else 'N/A'}",
+            "",
+            "METHOD 1 (Red Channel Only):",
+            f"  Status: {'SUCCESS' if pupil_method1 is not None else 'FAILED'}",
+            f"  Center: {pupil_method1['center'] if pupil_method1 is not None else 'N/A'}",
+            f"  Radius: {pupil_method1['radius'] if pupil_method1 is not None else 'N/A'}",
+            "",
+            "METHOD 2 (CLAHE + Adaptive):",
+            f"  Status: {'SUCCESS' if pupil_method2 is not None else 'FAILED'}",
+            f"  Center: {pupil_method2['center'] if pupil_method2 is not None else 'N/A'}",
+            f"  Radius: {pupil_method2['radius'] if pupil_method2 is not None else 'N/A'}",
+            "",
+            "LEGEND:",
+            "Green: Iris",
+            "Blue: Method 1 (Red Channel)",
+            "Yellow: Method 2 (CLAHE)"
+        ]
+        
+        for i, text in enumerate(params_text):
+            color = (255, 255, 255) if not text.startswith(('METHOD', 'LEGEND:')) else (0, 255, 255)
+            cv2.putText(params_img, text, (10, 25 + i * 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+        
+        # Add white padding between images
+        padding = 10
+        white_padding = np.ones((target_size[1], padding, 3), dtype=np.uint8) * 255
+        white_padding_h = np.ones((padding, target_size[0] * 3 + padding * 2, 3), dtype=np.uint8) * 255
+        
+        # Create 2x3 grid
+        # Row 1: Original+Iris, Method1, Method2
+        row1 = np.hstack([original_with_iris, white_padding, method1_result, white_padding, method2_result])
+        
+        # Row 2: Combined, Parameters (empty space)
+        row2 = np.hstack([combined_result, white_padding, params_img, white_padding, 
+                         np.zeros((target_size[1], target_size[0], 3), dtype=np.uint8)])
+        
+        # Combine rows
+        comprehensive = np.vstack([row1, white_padding_h, row2])
+        
+        # Add labels
+        label_y = 20
+        cv2.putText(comprehensive, "Original+Iris", (10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Method 1 (Red)", (target_size[0] + padding + 10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Method 2 (CLAHE)", (2 * (target_size[0] + padding) + 10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        
+        cv2.putText(comprehensive, "Combined", (10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(comprehensive, "Parameters", (target_size[0] + padding + 10, target_size[1] + padding + label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        
+        # Save comprehensive visualization
+        debug_path = f"{debug_dir}/dual_method_frame_{frame_number:03d}.jpg"
+        cv2.imwrite(debug_path, comprehensive)
+        print(f"📊 Dual method debug visualization saved: {debug_path}")
     
     def detect_pupil_by_darkness(self, frame, iris_circle, iris_radius, frame_number, last_pupil_result, debug=False):
         """
@@ -2077,9 +2314,10 @@ class CleanVideoPupilTracker:
                 print("❌ No iris detections found in entire video")
                 return False
             
-            print("Phase 2: Processing video with fixed iris for pupil detection...")
+            print("Phase 2: Running pupil detection on all frames...")
             
-            # Phase 2: Process video with fixed iris
+            # Phase 2a: Run detection on all frames and store results
+            detection_results = {}  # frame_number -> detection_result
             processed_count = 0
             failed_count = 0
             
@@ -2092,6 +2330,7 @@ class CleanVideoPupilTracker:
         # Track previous pupil result for temporal constraints
         last_pupil_result = None
         
+        # Phase 2a: Run detection on all frames
         for frame_number in self.frames_to_process:
             # Set frame position
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
@@ -2106,35 +2345,115 @@ class CleanVideoPupilTracker:
             iris_result = self.fixed_iris
             
             # Detect pupil using current iris (enable debug for specific frames)
-            # Enable debug for every 30 frames, bright region (frames 40-85), and frame 7
             debug_frames = list(range(0, 144, 30)) + [7]  # Every 30 frames: 0, 30, 60, 90, 120 + frame 7
             is_bright_frame = 40 <= frame_number <= 85  # Hardcoded bright region
-            
             debug_enabled = frame_number in debug_frames or is_bright_frame
+            
             pupil_result = self.detect_pupil(frame, iris_result, debug=debug_enabled, frame_number=frame_number, last_pupil_result=last_pupil_result)
             
-            # Check if pupil detection failed
-            pupil_detection_failed = False
-            if pupil_result is None:
-                pupil_detection_failed = True
-                failed_count += 1
-            else:
-                # Validate pupil detection
-                pupil_radius = pupil_result['radius']
-                if pupil_radius <= 0:
-                    pupil_detection_failed = True
-                    failed_count += 1
+            # Store detection result
+            detection_results[frame_number] = {
+                'iris_result': iris_result,
+                'pupil_result': pupil_result,
+                'frame': frame.copy()
+            }
             
-            # Always write frame to video (with or without pupil detection)
-            if pupil_detection_failed:
-                # Create visualization frame with iris only (no pupil)
-                vis_frame = self.create_visualization_frame(
-                    frame, iris_result, None, frame_number, frame_number / self.fps, 0
-                )
+            # Process successful detections for data storage
+            if pupil_result is not None:
+                primary_result = pupil_result['primary']
+                method_used = pupil_result['method_used']
+                
+                if primary_result is not None and primary_result['radius'] > 0:
+                    # Update last_pupil_result for temporal constraints
+                    last_pupil_result = primary_result
+                    
+                    # Store tracking data
+                    try:
+                        timestamp = frame_number / self.fps
+                        if not np.isfinite(timestamp):
+                            timestamp = 0.0
+                    except ZeroDivisionError:
+                        timestamp = 0.0
+                    
+                    pupil_radius = primary_result['radius']
+                    pupil_diameter = pupil_radius * 2
+                    pupil_area = np.pi * pupil_radius ** 2
+                    
+                    # Calculate iris-pupil ratio with error handling
+                    try:
+                        iris_pupil_ratio = pupil_radius / iris_result['radius']
+                        if not np.isfinite(iris_pupil_ratio):
+                            iris_pupil_ratio = 0.0
+                    except ZeroDivisionError:
+                        iris_pupil_ratio = 0.0
+                    
+                    self.tracking_data.append({
+                        'frame_idx': frame_number,
+                        'timestamp': timestamp,
+                        'iris_center_x': iris_result['center'][0],
+                        'iris_center_y': iris_result['center'][1],
+                        'iris_radius': iris_result['radius'],
+                        'pupil_center_x': primary_result['center'][0],
+                        'pupil_center_y': primary_result['center'][1],
+                        'pupil_radius': pupil_radius,
+                        'pupil_diameter': pupil_diameter,
+                        'pupil_area': pupil_area,
+                        'iris_pupil_ratio': iris_pupil_ratio,
+                        'detection_method': method_used
+                    })
+                    
+                    processed_count += 1
+                else:
+                    failed_count += 1
             else:
-                # Create visualization frame with both iris and pupil
+                failed_count += 1
+            
+            # Progress update
+            if frame_number % 15 == 0:  # Every 15 frames
+                print(f"Detected frame {frame_number}/{self.total_frames}")
+        
+        print(f"Phase 2b: Creating video with stored detection results...")
+        
+        # Phase 2b: Create video by reading original video and overlaying detections
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to beginning
+        
+        for frame_number in self.frames_to_process:
+            # Read original frame
+            ret, frame = self.cap.read()
+            if not ret:
+                print(f"Failed to read frame {frame_number} for video creation")
+                continue
+            
+            # Get detection results for this frame
+            if frame_number in detection_results:
+                iris_result = detection_results[frame_number]['iris_result']
+                pupil_result = detection_results[frame_number]['pupil_result']
+                
+                # Create visualization frame
+                if pupil_result is not None:
+                    pupil_method1 = pupil_result['method1']
+                    pupil_method2 = pupil_result['method2']
+                    primary_result = pupil_result['primary']
+                    method_used = pupil_result['method_used']
+                    
+                    if primary_result is not None:
+                        # Show the combined result (primary) with method indicator
+                        vis_frame = self.create_visualization_frame(
+                            frame, iris_result, primary_result, frame_number, frame_number / self.fps, 
+                            primary_result['radius'], pupil_method2, method_used
+                        )
+                    else:
+                        vis_frame = self.create_visualization_frame(
+                            frame, iris_result, None, frame_number, frame_number / self.fps, 0, pupil_method2, method_used
+                        )
+                else:
+                    vis_frame = self.create_visualization_frame(
+                        frame, iris_result, None, frame_number, frame_number / self.fps, 0, None, 'none'
+                    )
+            else:
+                # Fallback if no detection results
                 vis_frame = self.create_visualization_frame(
-                    frame, iris_result, pupil_result, frame_number, frame_number / self.fps, pupil_result['radius']
+                    frame, self.fixed_iris, None, frame_number, frame_number / self.fps, 0
                 )
             
             # Write to output video
@@ -2147,55 +2466,6 @@ class CleanVideoPupilTracker:
                     print(f"  Error writing frame {frame_number} to video: {e}")
             elif self.video_writer:
                 print(f"  Video writer not opened, skipping frame {frame_number}")
-            
-            # Skip data processing for failed frames
-            if pupil_detection_failed:
-                continue
-            
-            # Update last_pupil_result for temporal constraints
-            last_pupil_result = pupil_result
-            
-            # Store tracking data with error handling
-            try:
-                timestamp = frame_number / self.fps
-                if not np.isfinite(timestamp):
-                    timestamp = 0.0
-            except ZeroDivisionError:
-                timestamp = 0.0
-            
-            pupil_diameter = pupil_radius * 2
-            pupil_area = np.pi * pupil_radius ** 2
-            
-            # Calculate iris-pupil ratio with error handling
-            try:
-                iris_pupil_ratio = pupil_radius / iris_result['radius']
-                if not np.isfinite(iris_pupil_ratio):
-                    print(f"Invalid iris-pupil ratio in frame {frame_number}: {iris_pupil_ratio}")
-                    iris_pupil_ratio = 0.0
-            except ZeroDivisionError:
-                print(f"Zero division error in frame {frame_number} - iris radius: {iris_result['radius']}")
-                iris_pupil_ratio = 0.0
-            
-            self.tracking_data.append({
-                'frame_idx': frame_number,
-                'timestamp': timestamp,
-                'iris_center_x': iris_result['center'][0],
-                'iris_center_y': iris_result['center'][1],
-                'iris_radius': iris_result['radius'],
-                'pupil_center_x': pupil_result['center'][0],
-                'pupil_center_y': pupil_result['center'][1],
-                'pupil_radius': pupil_radius,
-                'pupil_diameter': pupil_diameter,
-                'pupil_area': pupil_area,
-                'iris_pupil_ratio': iris_pupil_ratio,
-                'detection_method': 'clean_debug_based'
-            })
-            
-            processed_count += 1
-            
-            # Progress update
-            if frame_number % 15 == 0:  # Every 15 frames
-                print(f"Processed frame {frame_number}/{self.total_frames} (pupil radius: {pupil_radius})")
         
         # Cleanup
         self.cap.release()
@@ -2216,8 +2486,8 @@ class CleanVideoPupilTracker:
         
         return processed_count > 0
     
-    def create_visualization_frame(self, frame, iris_result, pupil_result, frame_idx, timestamp, pupil_radius):
-        """Create visualization frame with detection overlays"""
+    def create_visualization_frame(self, frame, iris_result, pupil_result, frame_idx, timestamp, pupil_radius, pupil_method2=None, method_used='none'):
+        """Create visualization frame with detection overlays showing combined method results"""
         vis_frame = frame.copy()
         
         # Draw iris circle (green)
@@ -2229,26 +2499,48 @@ class CleanVideoPupilTracker:
             cv2.putText(vis_frame, f"Iris: r={iris_radius}", (iris_center[0] + 10, iris_center[1] - 10), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         
-        # Draw pupil circle (yellow)
+        # Draw primary pupil circle (color depends on method used)
         if pupil_result is not None:
             pupil_center = pupil_result['center']
             pupil_radius = pupil_result['radius']
-            cv2.circle(vis_frame, pupil_center, pupil_radius, (0, 255, 255), 3)  # Yellow for pupil
-            cv2.circle(vis_frame, pupil_center, 3, (0, 255, 255), -1)
-            cv2.putText(vis_frame, f"Pupil: r={pupil_radius}", (pupil_center[0] + 10, pupil_center[1] + 20), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            
+            # Choose color based on method used
+            if method_used == 'method1':
+                pupil_color = (255, 0, 0)  # Blue for Method 1
+                method_label = "M1"
+            elif method_used == 'method2':
+                pupil_color = (0, 255, 255)  # Yellow for Method 2
+                method_label = "M2"
+            else:
+                pupil_color = (128, 128, 128)  # Gray for unknown
+                method_label = "?"
+            
+            cv2.circle(vis_frame, pupil_center, pupil_radius, pupil_color, 3)
+            cv2.circle(vis_frame, pupil_center, 3, pupil_color, -1)
+            cv2.putText(vis_frame, f"{method_label}: r={pupil_radius}", (pupil_center[0] + 10, pupil_center[1] + 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, pupil_color, 1)
+        
+        # Draw Method 2 pupil circle (yellow) as reference if different from primary
+        if pupil_method2 is not None and method_used != 'method2':
+            pupil_center = pupil_method2['center']
+            pupil_radius = pupil_method2['radius']
+            cv2.circle(vis_frame, pupil_center, pupil_radius, (0, 255, 255), 2)  # Yellow for Method 2 (thinner)
+            cv2.circle(vis_frame, pupil_center, 2, (0, 255, 255), -1)
+            cv2.putText(vis_frame, f"M2: r={pupil_radius}", (pupil_center[0] + 10, pupil_center[1] + 40), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
         
         # Add frame information
         info_text = f"Frame: {frame_idx} | Time: {timestamp:.2f}s"
         cv2.putText(vis_frame, info_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
-        # Add detection status
-        status_text = "IRIS + PUPIL DETECTION"
-        cv2.putText(vis_frame, status_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        # Add detection status with method used
+        status_text = f"COMBINED DETECTION ({method_used.upper()})"
+        cv2.putText(vis_frame, status_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
         
         # Add legend
         cv2.putText(vis_frame, "Green: Iris", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-        cv2.putText(vis_frame, "Yellow: Pupil", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        cv2.putText(vis_frame, "Blue: Method 1 (Red Channel)", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+        cv2.putText(vis_frame, "Yellow: Method 2 (CLAHE)", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
         
         return vis_frame
     
@@ -2268,6 +2560,9 @@ class CleanVideoPupilTracker:
         
         # Create and save plot
         self.create_plot(video_name)
+        
+        # Create method comparison plot
+        self.create_method_comparison_plot(video_name)
         
         # Save statistics
         self.save_statistics(video_name)
@@ -2300,6 +2595,79 @@ class CleanVideoPupilTracker:
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Saved plot: {plot_path}")
+    
+    def create_method_comparison_plot(self, video_name):
+        """Create a plot comparing both detection methods over time"""
+        # We need to reconstruct the full timeline with both methods
+        # First, let's get all frame numbers from the video
+        total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = self.cap.get(cv2.CAP_PROP_FPS)
+        
+        # Create full timeline
+        timestamps = np.arange(total_frames) / fps
+        
+        # Initialize arrays for both methods
+        method1_radius = np.full(total_frames, np.nan)
+        method2_radius = np.full(total_frames, np.nan)
+        combined_radius = np.full(total_frames, np.nan)
+        
+        # Fill in the data we have
+        df = pd.DataFrame(self.tracking_data)
+        for _, row in df.iterrows():
+            frame_idx = int(row['frame_idx'])
+            if frame_idx < total_frames:
+                combined_radius[frame_idx] = row['pupil_radius']
+                
+                # Determine which method was used
+                if row['detection_method'] == 'method1':
+                    method1_radius[frame_idx] = row['pupil_radius']
+                elif row['detection_method'] == 'method2':
+                    method2_radius[frame_idx] = row['pupil_radius']
+        
+        # Create the plot
+        fig, ax = plt.subplots(1, 1, figsize=(14, 8))
+        
+        # Plot both methods
+        ax.plot(timestamps, method1_radius, 'b-', linewidth=2, label='Method 1 (Red Channel)', alpha=0.8)
+        ax.plot(timestamps, method2_radius, 'orange', linewidth=2, label='Method 2 (CLAHE + Adaptive)', alpha=0.8)
+        ax.plot(timestamps, combined_radius, 'g-', linewidth=3, label='Combined Result', alpha=0.6)
+        
+        # Add markers for successful detections
+        method1_valid = ~np.isnan(method1_radius)
+        method2_valid = ~np.isnan(method2_radius)
+        
+        if np.any(method1_valid):
+            ax.scatter(timestamps[method1_valid], method1_radius[method1_valid], 
+                      c='blue', s=20, alpha=0.6, zorder=5)
+        if np.any(method2_valid):
+            ax.scatter(timestamps[method2_valid], method2_radius[method2_valid], 
+                      c='orange', s=20, alpha=0.6, zorder=5)
+        
+        ax.set_xlabel('Time (seconds)')
+        ax.set_ylabel('Pupil Radius (pixels)')
+        ax.set_title(f'Method Comparison Over Time - {video_name}')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        
+        # Add text box with method usage statistics
+        method1_count = np.sum(method1_valid)
+        method2_count = np.sum(method2_valid)
+        total_detections = method1_count + method2_count
+        
+        stats_text = f"""Method Usage Statistics:
+Method 1 (Red Channel): {method1_count} frames ({method1_count/total_detections*100:.1f}%)
+Method 2 (CLAHE): {method2_count} frames ({method2_count/total_detections*100:.1f}%)
+Total Detections: {total_detections} frames"""
+        
+        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=10,
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        plt.tight_layout()
+        
+        plot_path = os.path.join(self.output_dir, f"method_comparison_{video_name}.png")
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Saved method comparison plot: {plot_path}")
     
     def save_statistics(self, video_name):
         """Save tracking statistics"""
