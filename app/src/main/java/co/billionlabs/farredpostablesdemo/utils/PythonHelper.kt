@@ -174,10 +174,28 @@ class PupilTrackingHelper {
                 val cleanFileExists = os.get("path")?.callAttr("exists", cleanCsvPath)?.toBoolean() ?: false
                 if (cleanCsvPath != null && cleanFileExists) {
                     val pupilData = loadPupilDataFromCsv(pandas, cleanCsvPath.toString())
-                    val imagePath = os.get("path")?.callAttr("join", outputDir, "pupil_size_filtered_${videoName}.png")?.toString()
+                    // Try filtered-only PNG first, then fallback to regular filtered PNG
+                    val filteredOnlyPath = os.get("path")?.callAttr("join", outputDir, "pupil_size_filtered_only_${videoName}.png")?.toString()
+                    val filteredPath = os.get("path")?.callAttr("join", outputDir, "pupil_size_filtered_${videoName}.png")?.toString()
+                    
+                    val imagePath = when {
+                        filteredOnlyPath != null && os.get("path")?.callAttr("exists", filteredOnlyPath)?.toBoolean() == true -> {
+                            android.util.Log.d("PupilTrackingHelper", "Found filtered-only PNG: $filteredOnlyPath")
+                            filteredOnlyPath
+                        }
+                        filteredPath != null && os.get("path")?.callAttr("exists", filteredPath)?.toBoolean() == true -> {
+                            android.util.Log.d("PupilTrackingHelper", "Found regular filtered PNG: $filteredPath")
+                            filteredPath
+                        }
+                        else -> {
+                            android.util.Log.w("PupilTrackingHelper", "No PNG file found, using filtered-only path as fallback")
+                            filteredOnlyPath ?: filteredPath ?: ""
+                        }
+                    }
+                    
                     return mapOf(
                         "pupilData" to pupilData,
-                        "imagePath" to (imagePath ?: "")
+                        "imagePath" to imagePath
                     )
                 } else {
                     android.util.Log.e("PupilTrackingHelper", "No pupil data files found")
@@ -190,10 +208,28 @@ class PupilTrackingHelper {
             
             if (csvPath != null) {
                 val pupilData = loadPupilDataFromCsv(pandas, csvPath.toString())
-                val imagePath = os.get("path")?.callAttr("join", outputDir, "pupil_size_filtered_${videoName}.png")?.toString()
+                // Try filtered-only PNG first, then fallback to regular filtered PNG
+                val filteredOnlyPath = os.get("path")?.callAttr("join", outputDir, "pupil_size_filtered_only_${videoName}.png")?.toString()
+                val filteredPath = os.get("path")?.callAttr("join", outputDir, "pupil_size_filtered_${videoName}.png")?.toString()
+                
+                val imagePath = when {
+                    filteredOnlyPath != null && os.get("path")?.callAttr("exists", filteredOnlyPath)?.toBoolean() == true -> {
+                        android.util.Log.d("PupilTrackingHelper", "Found filtered-only PNG: $filteredOnlyPath")
+                        filteredOnlyPath
+                    }
+                    filteredPath != null && os.get("path")?.callAttr("exists", filteredPath)?.toBoolean() == true -> {
+                        android.util.Log.d("PupilTrackingHelper", "Found regular filtered PNG: $filteredPath")
+                        filteredPath
+                    }
+                    else -> {
+                        android.util.Log.w("PupilTrackingHelper", "No PNG file found, using filtered-only path as fallback")
+                        filteredOnlyPath ?: filteredPath ?: ""
+                    }
+                }
+                
                 return mapOf(
                     "pupilData" to pupilData,
-                    "imagePath" to (imagePath ?: "")
+                    "imagePath" to imagePath
                 )
             } else {
                 android.util.Log.e("PupilTrackingHelper", "Failed to construct CSV path")

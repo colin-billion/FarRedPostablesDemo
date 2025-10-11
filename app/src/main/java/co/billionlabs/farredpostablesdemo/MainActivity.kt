@@ -203,13 +203,13 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
             if (useFrontCamera) {
                 // Front camera mode: Use screen lighting
                 // Phase 1: 1 second dim red (already set)
-                sequencePhase = "Dim Red (1s) - Front Camera"
+                sequencePhase = "Dim Red (0.5s) - Front Camera"
                 currentBackgroundColor = Color.Red
                 screenController.setMinimumBrightness() // Keep minimum for dim red
                 delay(500)
                 
                 // Phase 2: 1 seconds bright white
-                sequencePhase = "Bright White (1s) - Front Camera"
+                sequencePhase = "Bright White (1.5s) - Front Camera"
                 currentBackgroundColor = Color.White
                 screenController.setMaximumBrightness()
                 screenController.setBackgroundColor(Color.White)
@@ -224,14 +224,14 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
             } else {
                 // Back camera mode: Use flash with high screen brightness
                 // Phase 1: 1 second no flash (keep high brightness)
-                sequencePhase = "No Flash (1s) - Back Camera"
+                sequencePhase = "No Flash (0.5s) - Back Camera"
                 currentBackgroundColor = Color.Red
                 screenController.setMaximumBrightness() // Keep high brightness for visibility
                 disableFlash(camera)
                 delay(500)
                 
                 // Phase 2: 1 seconds with flash
-                sequencePhase = "Flash On (1s) - Back Camera"
+                sequencePhase = "Flash On (1.5s) - Back Camera"
                 currentBackgroundColor = Color.White
                 screenController.setMaximumBrightness() // Keep high brightness
                 enableFlash(camera)
