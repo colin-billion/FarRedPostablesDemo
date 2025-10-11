@@ -136,7 +136,6 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     var countdownTime by remember { mutableStateOf(5) }
     var currentBackgroundColor by remember { mutableStateOf(Color.Red) }
     var sequencePhase by remember { mutableStateOf("") }
-    var pythonTestResult by remember { mutableStateOf<String?>(null) }
     
     // Pupil tracking states
     var pupilData by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
@@ -278,33 +277,6 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
                 )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                Button(
-                    onClick = {
-                        pythonTestResult = pupilHelper?.testPythonIntegration() 
-                            ?: "Python not initialized"
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (currentBackgroundColor == Color.White) Color.Blue else Color.Green
-                    )
-                ) {
-                    Text(
-                        text = if (pupilHelper != null) "Test Python" else "Python Not Available",
-                        color = Color.White
-                    )
-                }
-                
-                pythonTestResult?.let { result ->
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = result,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (currentBackgroundColor == Color.White) Color.Black else Color.White,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
