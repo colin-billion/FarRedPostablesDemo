@@ -18,11 +18,12 @@ import argparse
 class CleanVideoPupilTracker:
     """Red-channel adaptive pupil tracker"""
     
-    def __init__(self, video_path, output_dir="data/output", frame_interval=1):
+    def __init__(self, video_path, output_dir="data/output", frame_interval=1, debug=False):
         """Initialize the red-channel pupil tracker"""
         self.video_path = video_path
         self.output_dir = output_dir
         self.frame_interval = frame_interval
+        self.debug = debug
         
         # Create output directory
         os.makedirs(output_dir, exist_ok=True)
@@ -371,7 +372,7 @@ Threshold: {threshold:.0f}"""
                 continue
             
             # Enable debug every 20 frames and specifically for frame 70
-            debug_enabled = frame_number % 20 == 0 or frame_number == 70
+            debug_enabled = self.debug and (frame_number % 20 == 0 or frame_number == 70)
             
             # Detect pupil using red-channel adaptive method
             pupil_result = self.detect_pupil_red_channel_adaptive(frame, debug=debug_enabled, frame_number=frame_number)

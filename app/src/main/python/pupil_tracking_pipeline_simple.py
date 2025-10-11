@@ -18,10 +18,11 @@ from pupil_post_processor_simple import SimplePupilPostProcessor
 class SimplePupilTrackingPipeline:
     """Simplified pipeline for pupil tracking and analysis"""
     
-    def __init__(self, video_path, output_dir=None, frame_interval=1):
+    def __init__(self, video_path, output_dir=None, frame_interval=1, debug=False):
         """Initialize the simplified pipeline"""
         self.video_path = video_path
         self.frame_interval = frame_interval
+        self.debug = debug
         
         # Use Android app directory if no output_dir specified
         if output_dir is None:
@@ -119,7 +120,7 @@ class SimplePupilTrackingPipeline:
         
         try:
             # Initialize simple post-processor
-            processor = SimplePupilPostProcessor(self.csv_path, self.output_dir)
+            processor = SimplePupilPostProcessor(self.csv_path, self.output_dir, self.debug)
             
             # Run filtering with same parameters as main pipeline
             processor.run_filtering(

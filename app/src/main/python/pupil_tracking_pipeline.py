@@ -26,11 +26,12 @@ class PupilTrackingPipeline:
     
     def __init__(self, video_path, output_dir="../data/output", frame_interval=1,
                  outlier_method='pixel_threshold', outlier_threshold=20,
-                 smoothing_method='kalman', smoothing_window=None):
+                 smoothing_method='kalman', smoothing_window=None, debug=False):
         """Initialize the complete pipeline"""
         self.video_path = video_path
         self.base_output_dir = output_dir
         self.frame_interval = frame_interval
+        self.debug = debug
         
         # Post-processing parameters
         self.outlier_method = outlier_method
@@ -122,7 +123,8 @@ class PupilTrackingPipeline:
             tracker = CleanVideoPupilTracker(
                 self.video_path,
                 self.output_dir,
-                self.frame_interval
+                self.frame_interval,
+                self.debug
             )
             
             # Process video
@@ -168,7 +170,7 @@ class PupilTrackingPipeline:
         
         try:
             # Initialize post-processor
-            processor = PupilPostProcessor(self.csv_path, self.output_dir)
+            processor = PupilPostProcessor(self.csv_path, self.output_dir, self.debug)
             
             # Run filtering
             processor.run_filtering(
@@ -315,6 +317,8 @@ Examples:
                        default='moving_average', help='Smoothing method (default: moving_average)')
     parser.add_argument('--smoothing_window', type=int, default=10,
                        help='Smoothing window length (default: 10 for moving_average)')
+    parser.add_argument('--debug', action='store_true', default=False,
+                       help='Enable debug mode (creates debug visualizations and extra outputs)')
     
     # Pipeline control
     parser.add_argument('--tracking_only', action='store_true',
@@ -348,7 +352,8 @@ Examples:
             args.outlier_method,
             args.outlier_threshold,
             args.smoothing_method,
-            args.smoothing_window
+            args.smoothing_window,
+            args.debug
         )
         
         if args.tracking_only:
