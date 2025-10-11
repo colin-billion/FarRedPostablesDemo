@@ -312,9 +312,9 @@ Examples:
     parser.add_argument('--outlier_threshold', type=float, default=20,
                        help='Outlier detection threshold (pixels for pixel_threshold, multiplier for others) (default: 20)')
     parser.add_argument('--smoothing_method', choices=['savgol', 'moving_average', 'gaussian', 'kalman'],
-                       default='kalman', help='Smoothing method (default: kalman)')
-    parser.add_argument('--smoothing_window', type=int,
-                       help='Smoothing window length (auto-determined if not specified)')
+                       default='moving_average', help='Smoothing method (default: moving_average)')
+    parser.add_argument('--smoothing_window', type=int, default=10,
+                       help='Smoothing window length (default: 10 for moving_average)')
     
     # Pipeline control
     parser.add_argument('--tracking_only', action='store_true',

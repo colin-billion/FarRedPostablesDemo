@@ -121,12 +121,12 @@ class SimplePupilTrackingPipeline:
             # Initialize simple post-processor
             processor = SimplePupilPostProcessor(self.csv_path, self.output_dir)
             
-            # Run filtering with default parameters
+            # Run filtering with same parameters as main pipeline
             processor.run_filtering(
                 outlier_method='pixel_threshold',
                 outlier_threshold=20,
                 smoothing_method='moving_average',
-                smoothing_window=None
+                smoothing_window=10
             )
             
             elapsed_time = time.time() - start_time

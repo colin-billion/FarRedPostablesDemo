@@ -156,8 +156,11 @@ class CleanVideoPupilTracker:
         # Find the darkest pixel value in the frame
         darkest_pixel = red_channel.min()
         
-        # Add tolerance (e.g., +15 intensity levels) to include slightly brighter pixels
-        tolerance = 15
+        # Adaptive tolerance: +30 for dark frames, +20 for bright frames
+        if darkest_pixel > 150:
+            tolerance = 20  # Use smaller tolerance for bright frames
+        else:
+            tolerance = 30  # Use larger tolerance for dark frames
         adaptive_threshold = darkest_pixel + tolerance
         
         # Calculate histogram for visualization
@@ -367,8 +370,8 @@ Threshold: {threshold:.0f}"""
                 failed_count += 1
                 continue
             
-            # Enable debug every 20 frames
-            debug_enabled = frame_number % 20 == 0
+            # Enable debug every 20 frames and specifically for frame 70
+            debug_enabled = frame_number % 20 == 0 or frame_number == 70
             
             # Detect pupil using red-channel adaptive method
             pupil_result = self.detect_pupil_red_channel_adaptive(frame, debug=debug_enabled, frame_number=frame_number)
