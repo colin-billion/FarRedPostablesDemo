@@ -183,50 +183,35 @@ class SimplePupilPostProcessor:
         return self.df
     
     def create_pupil_size_plot(self, save_plot=True):
-        """Create a clean plot of pupil size over time"""
-        print(f"\nCreating pupil size plot...")
+        """Create a clean plot showing only the filtered pupil size over time"""
+        print(f"\nCreating filtered pupil size plot...")
         
         # Set up the plot
         plt.figure(figsize=(12, 8))
         
-        # Plot original data (light)
-        plt.plot(self.df['timestamp'], self.df['pupil_radius'], 
-                alpha=0.3, color='lightblue', linewidth=1, label='Original')
-        
-        # Plot smoothed data (bold)
+        # Plot only the filtered/smoothed data
         if 'pupil_radius_smoothed' in self.df.columns:
             plt.plot(self.df['timestamp'], self.df['pupil_radius_smoothed'], 
-                    color='darkblue', linewidth=2, label='Filtered')
+                    color='darkblue', linewidth=3, label='Pupil Size')
+        else:
+            # Fallback to original data if no smoothing was applied
+            plt.plot(self.df['timestamp'], self.df['pupil_radius'], 
+                    color='darkblue', linewidth=3, label='Pupil Size')
         
         # Styling
-        plt.xlabel('Time (seconds)', fontsize=12)
-        plt.ylabel('Pupil Radius (pixels)', fontsize=12)
-        plt.title(f'Pupil Size Over Time - {self.video_name}', fontsize=14, fontweight='bold')
-        plt.legend()
+        plt.xlabel('Time (seconds)', fontsize=14)
+        plt.ylabel('Pupil Radius (pixels)', fontsize=14)
+        plt.title(f'Pupil Size Over Time - {self.video_name}', fontsize=16, fontweight='bold')
         plt.grid(True, alpha=0.3)
         
-        # Add statistics text
-        if 'pupil_radius_smoothed' in self.df.columns:
-            mean_radius = self.df['pupil_radius_smoothed'].mean()
-            std_radius = self.df['pupil_radius_smoothed'].std()
-            min_radius = self.df['pupil_radius_smoothed'].min()
-            max_radius = self.df['pupil_radius_smoothed'].max()
-        else:
-            mean_radius = self.df['pupil_radius'].mean()
-            std_radius = self.df['pupil_radius'].std()
-            min_radius = self.df['pupil_radius'].min()
-            max_radius = self.df['pupil_radius'].max()
-        
-        stats_text = f'Mean: {mean_radius:.1f} ± {std_radius:.1f}\nRange: {min_radius:.1f} - {max_radius:.1f}'
-        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes, 
-                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        # Clean plot with no legends or statistics text
         
         plt.tight_layout()
         
         if save_plot:
             plot_path = os.path.join(self.output_dir, f'pupil_size_filtered_{self.video_name}.png')
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-            print(f"Plot saved: {plot_path}")
+            print(f"Filtered plot saved: {plot_path}")
         
         plt.show()
         return plt.gcf()

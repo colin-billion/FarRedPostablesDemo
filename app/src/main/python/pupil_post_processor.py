@@ -105,22 +105,28 @@ class PupilPostProcessor:
         if replace_with_interpolation:
             # Replace outliers with interpolated values
             self.df.loc[self.outlier_mask, 'pupil_radius'] = np.nan
+            
+            # Interpolate missing values
             self.df['pupil_radius'] = self.df['pupil_radius'].interpolate(method='linear')
+            
+            # Handle edge cases (first/last values)
+            self.df['pupil_radius'] = self.df['pupil_radius'].fillna(method='bfill').fillna(method='ffill')
+            
             print("Outliers replaced with interpolated values")
         else:
             # Remove outlier rows entirely
             self.df = self.df[~self.outlier_mask].reset_index(drop=True)
             print(f"Removed {self.outlier_mask.sum()} outlier frames")
     
-    def smooth_data(self, method='savgol', window_length=None, polyorder=3):
+    def smooth_data(self, method='moving_average', window_length=None, polyorder=3):
         """Apply smoothing to pupil radius data"""
         print(f"\nApplying {method} smoothing...")
         
         if window_length is None:
-            # Auto-determine window length
-            window_length = min(21, len(self.df) // 10 * 2 + 1)
-            if window_length < 5:
-                window_length = 5
+            # Auto-determine window length (5% of data length, minimum 3, maximum 21)
+            window_length = max(3, min(21, len(self.df) // 20))
+            if window_length % 2 == 0:
+                window_length += 1  # Make odd for better smoothing
         
         if method == 'savgol':
             # Savitzky-Golay filter
@@ -136,7 +142,7 @@ class PupilPostProcessor:
         elif method == 'moving_average':
             # Moving average
             self.df['pupil_radius_smoothed'] = self.df['pupil_radius'].rolling(
-                window=window_length, center=True
+                window=window_length, center=True, min_periods=1
             ).mean()
             
         elif method == 'gaussian':
@@ -247,14 +253,13 @@ class PupilPostProcessor:
         return save_path
     
     def run_filtering(self, outlier_method='pixel_threshold', outlier_threshold=20, 
-                     smoothing_method='kalman', smoothing_window=None):
+                     smoothing_method='moving_average', smoothing_window=None):
         """Run complete filtering process"""
         print(f"\n{'='*50}")
         print(f"RUNNING PUPIL SIZE FILTERING")
         print(f"{'='*50}")
         
         # 1. Detect and filter outliers
-        self.detect_outliers(method=outlier_method, threshold=outlier_threshold)
         self.filter_outliers(method=outlier_method, threshold=outlier_threshold)
         
         # 2. Apply smoothing

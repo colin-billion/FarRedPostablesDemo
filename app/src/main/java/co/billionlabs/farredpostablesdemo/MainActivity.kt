@@ -202,13 +202,13 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
         if (isInSequence) {
             if (useFrontCamera) {
                 // Front camera mode: Use screen lighting
-                // Phase 1: 1 second dim red (already set)
+                // Phase 1: 0.5 second dim red (already set)
                 sequencePhase = "Dim Red (1s) - Front Camera"
                 currentBackgroundColor = Color.Red
                 screenController.setMinimumBrightness() // Keep minimum for dim red
                 delay(500)
                 
-                // Phase 2: 1 seconds bright white
+                // Phase 2: 1.5 seconds bright white
                 sequencePhase = "Bright White (1s) - Front Camera"
                 currentBackgroundColor = Color.White
                 screenController.setMaximumBrightness()
@@ -223,14 +223,14 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 delay(3000)
             } else {
                 // Back camera mode: Use flash with high screen brightness
-                // Phase 1: 1 second no flash (keep high brightness)
+                // Phase 1: 0.5 second no flash (keep high brightness)
                 sequencePhase = "No Flash (1s) - Back Camera"
                 currentBackgroundColor = Color.Red
                 screenController.setMaximumBrightness() // Keep high brightness for visibility
                 disableFlash(camera)
                 delay(500)
                 
-                // Phase 2: 1 seconds with flash
+                // Phase 2: 1.5 seconds with flash
                 sequencePhase = "Flash On (1s) - Back Camera"
                 currentBackgroundColor = Color.White
                 screenController.setMaximumBrightness() // Keep high brightness
@@ -280,31 +280,6 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 )
                 
                 Spacer(modifier = Modifier.height(8.dp))
-                
-                Button(
-                    onClick = {
-                        pythonTestResult = pupilHelper?.testPythonIntegration() 
-                            ?: "Python not initialized"
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (currentBackgroundColor == Color.White) Color.Blue else Color.Green
-                    )
-                ) {
-                    Text(
-                        text = if (pupilHelper != null) "Test Python" else "Python Not Available",
-                        color = Color.White
-                    )
-                }
-                
-                pythonTestResult?.let { result ->
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = result,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (currentBackgroundColor == Color.White) Color.Black else Color.White,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
