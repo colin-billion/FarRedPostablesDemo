@@ -225,6 +225,20 @@ class PupilPostProcessor:
             plt.scatter(outlier_times, outlier_radii, color='red', s=20, alpha=0.7, 
                        label=f'Outliers ({self.outlier_mask.sum()})', zorder=5)
         
+        # Set y-axis limits based on filtered data (not outliers)
+        if 'pupil_radius_smoothed' in self.df.columns:
+            data_to_use = self.df['pupil_radius_smoothed']
+        else:
+            data_to_use = self.df['pupil_radius']
+        
+        data_min = data_to_use.min()
+        data_max = data_to_use.max()
+        data_range = data_max - data_min
+        
+        # Add small padding (5% of range) but don't expand to include outliers
+        padding = data_range * 0.05
+        plt.ylim(data_min - padding, data_max + padding)
+        
         # Formatting
         plt.xlabel('Time (seconds)')
         plt.ylabel('Pupil Radius (pixels)')

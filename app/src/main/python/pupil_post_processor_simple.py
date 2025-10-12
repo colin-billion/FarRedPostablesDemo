@@ -191,12 +191,22 @@ class SimplePupilPostProcessor:
         
         # Plot only the filtered/smoothed data
         if 'pupil_radius_smoothed' in self.df.columns:
-            plt.plot(self.df['timestamp'], self.df['pupil_radius_smoothed'], 
-                    color='darkblue', linewidth=3, label='Pupil Size')
+            data_to_plot = self.df['pupil_radius_smoothed']
         else:
             # Fallback to original data if no smoothing was applied
-            plt.plot(self.df['timestamp'], self.df['pupil_radius'], 
-                    color='darkblue', linewidth=3, label='Pupil Size')
+            data_to_plot = self.df['pupil_radius']
+        
+        plt.plot(self.df['timestamp'], data_to_plot, 
+                color='darkblue', linewidth=3, label='Pupil Size')
+        
+        # Set y-axis limits based only on the filtered data (exclude outliers)
+        data_min = data_to_plot.min()
+        data_max = data_to_plot.max()
+        data_range = data_max - data_min
+        
+        # Add small padding (5% of range) but don't expand to include outliers
+        padding = data_range * 0.05
+        plt.ylim(data_min - padding, data_max + padding)
         
         # Styling
         plt.xlabel('Time (seconds)', fontsize=14)
