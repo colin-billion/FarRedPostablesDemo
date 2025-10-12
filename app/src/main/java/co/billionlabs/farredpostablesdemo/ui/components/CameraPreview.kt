@@ -58,26 +58,13 @@ fun CameraPreview(
     
     DisposableEffect(Unit) {
         onDispose {
-            // Ensure recording state is reset when component is disposed
-            if (isRecording) {
-                android.util.Log.d("CameraPreview", "Component disposed - stopping recording")
-                stopRecording(recording) {
-                    android.util.Log.d("CameraPreview", "Recording stopped during disposal")
-                }
-                isRecording = false
-                recordingTime = 0
-                onRecordingStateChanged(false)
-            }
             cameraExecutor.shutdown()
         }
     }
     
-    // Handle actual recording start and reset
+    // Handle actual recording start
     LaunchedEffect(shouldStartActualRecording) {
-        android.util.Log.d("CameraPreview", "LaunchedEffect triggered - shouldStartActualRecording: $shouldStartActualRecording, videoCapture: ${videoCapture != null}, hasProcessedRecording: $hasProcessedRecording")
-        
         if (shouldStartActualRecording && videoCapture != null && !hasProcessedRecording) {
-            android.util.Log.d("CameraPreview", "Starting recording sequence")
             hasProcessedRecording = true
             
             // Start the actual recording
@@ -99,44 +86,20 @@ fun CameraPreview(
             }
             
             // Stop recording after 5 seconds
-            android.util.Log.d("CameraPreview", "5 seconds elapsed - stopping recording")
-            
-            // Stop the actual recording first
             stopRecording(recording) {
-                android.util.Log.d("CameraPreview", "Recording stopped successfully")
-                onRecordingCompleted()
-            }
-            
-            // Reset recording state after stopping
-            isRecording = false
-            recordingTime = 0
-            onRecordingStateChanged(false)
-            
-            // Safety timeout: Force reset recording state after 2 additional seconds
-            // This prevents the app from getting stuck if recording doesn't stop properly
-            delay(2000)
-            if (isRecording) {
-                android.util.Log.w("CameraPreview", "Safety timeout: Forcing recording state reset")
                 isRecording = false
                 recordingTime = 0
                 onRecordingStateChanged(false)
+                onRecordingCompleted()
             }
-        } else if (!shouldStartActualRecording) {
-            // Reset the processed flag when shouldStartActualRecording becomes false
-            android.util.Log.d("CameraPreview", "Resetting hasProcessedRecording flag")
-            hasProcessedRecording = false
         }
     }
     
-    // Reset recording state when camera changes
-    LaunchedEffect(useFrontCamera) {
-        if (isRecording) {
-            android.util.Log.d("CameraPreview", "Camera changed during recording - resetting state")
-            isRecording = false
-            recordingTime = 0
-            onRecordingStateChanged(false)
+    // Reset the processed flag when shouldStartActualRecording becomes false
+    LaunchedEffect(shouldStartActualRecording) {
+        if (!shouldStartActualRecording) {
+            hasProcessedRecording = false
         }
-        hasProcessedRecording = false
     }
     
     // Initialize camera when component is first created
@@ -329,19 +292,8 @@ private fun startRecording(
 }
 
 private fun stopRecording(recording: Recording?, onStopped: () -> Unit) {
-    try {
-        if (recording != null) {
-            android.util.Log.d("CameraPreview", "Stopping recording...")
-            recording.stop()
-            android.util.Log.d("CameraPreview", "Recording stop() called")
-        } else {
-            android.util.Log.w("CameraPreview", "Recording is null, cannot stop")
-        }
-    } catch (e: Exception) {
-        android.util.Log.e("CameraPreview", "Error stopping recording: ${e.message}", e)
-    } finally {
-        onStopped()
-    }
+    recording?.stop()
+    onStopped()
 }
 
 

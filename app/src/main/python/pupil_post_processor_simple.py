@@ -18,11 +18,10 @@ warnings.filterwarnings('ignore')
 class SimplePupilPostProcessor:
     """Simple filter for pupil size data with clean visualization"""
     
-    def __init__(self, csv_path, output_dir=None, debug=False):
+    def __init__(self, csv_path, output_dir=None):
         """Initialize the pupil filter with tracking data"""
         self.csv_path = csv_path
         self.output_dir = output_dir or os.path.dirname(csv_path)
-        self.debug = debug
         self.video_name = Path(csv_path).stem.replace('pupil_data_clean_', '')
         
         # Load data
@@ -232,41 +231,6 @@ class SimplePupilPostProcessor:
         plt.show()
         return plt.gcf()
     
-    def create_filtered_only_plot(self, save_path=None):
-        """Create a clean plot showing only the filtered/smoothed data"""
-        print("\nCreating filtered-only pupil size plot...")
-        
-        # Check if filtered data exists
-        if 'pupil_radius_smoothed' not in self.df.columns:
-            print("No filtered data available. Run smoothing first.")
-            return None
-        
-        # Set up the plot
-        plt.figure(figsize=(12, 6))
-        
-        # Plot only filtered data
-        plt.plot(self.df['timestamp'], self.df['pupil_radius_smoothed'], 
-                color='darkblue', linewidth=2.5, label='Filtered Pupil Size')
-        
-        # Formatting
-        plt.xlabel('Time (seconds)', fontsize=12)
-        plt.ylabel('Pupil Radius (pixels)', fontsize=12)
-        plt.title(f'Filtered Pupil Size - {self.video_name}', fontsize=14, fontweight='bold')
-        plt.grid(True, alpha=0.3)
-        plt.legend(fontsize=11)
-        
-        
-        # Save plot
-        if save_path is None:
-            save_path = os.path.join(self.output_dir, f"pupil_size_filtered_only_{self.video_name}.png")
-        
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f"Filtered-only plot saved: {save_path}")
-        
-        return save_path
-    
     def save_filtered_data(self):
         """Save the filtered data to CSV"""
         output_path = os.path.join(self.output_dir, f'pupil_data_filtered_{self.video_name}.csv')
@@ -304,14 +268,8 @@ class SimplePupilPostProcessor:
         # Step 2: Apply smoothing
         self.smooth_data(smoothing_method, smoothing_window)
         
-        # Step 3: Create visualization (conditional based on debug mode)
-        if self.debug:
-            # Debug mode: create both plots
-            self.create_pupil_size_plot()
-            self.create_filtered_only_plot()
-        else:
-            # Non-debug mode: create only filtered-only plot
-            self.create_filtered_only_plot()
+        # Step 3: Create visualization
+        self.create_pupil_size_plot()
         
         # Step 4: Save results
         output_path = self.save_filtered_data()

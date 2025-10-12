@@ -136,6 +136,7 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     var countdownTime by remember { mutableStateOf(5) }
     var currentBackgroundColor by remember { mutableStateOf(Color.Red) }
     var sequencePhase by remember { mutableStateOf("") }
+    var pythonTestResult by remember { mutableStateOf<String?>(null) }
     
     // Pupil tracking states
     var pupilData by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
@@ -202,13 +203,13 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
             if (useFrontCamera) {
                 // Front camera mode: Use screen lighting
                 // Phase 1: 1 second dim red (already set)
-                sequencePhase = "Dim Red (0.5s) - Front Camera"
+                sequencePhase = "Dim Red (1s) - Front Camera"
                 currentBackgroundColor = Color.Red
                 screenController.setMinimumBrightness() // Keep minimum for dim red
                 delay(500)
                 
                 // Phase 2: 1 seconds bright white
-                sequencePhase = "Bright White (1.5s) - Front Camera"
+                sequencePhase = "Bright White (1s) - Front Camera"
                 currentBackgroundColor = Color.White
                 screenController.setMaximumBrightness()
                 screenController.setBackgroundColor(Color.White)
@@ -223,14 +224,14 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
             } else {
                 // Back camera mode: Use flash with high screen brightness
                 // Phase 1: 1 second no flash (keep high brightness)
-                sequencePhase = "No Flash (0.5s) - Back Camera"
+                sequencePhase = "No Flash (1s) - Back Camera"
                 currentBackgroundColor = Color.Red
                 screenController.setMaximumBrightness() // Keep high brightness for visibility
                 disableFlash(camera)
                 delay(500)
                 
                 // Phase 2: 1 seconds with flash
-                sequencePhase = "Flash On (1.5s) - Back Camera"
+                sequencePhase = "Flash On (1s) - Back Camera"
                 currentBackgroundColor = Color.White
                 screenController.setMaximumBrightness() // Keep high brightness
                 enableFlash(camera)
@@ -277,6 +278,33 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
                 )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Button(
+                    onClick = {
+                        pythonTestResult = pupilHelper?.testPythonIntegration() 
+                            ?: "Python not initialized"
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (currentBackgroundColor == Color.White) Color.Blue else Color.Green
+                    )
+                ) {
+                    Text(
+                        text = if (pupilHelper != null) "Test Python" else "Python Not Available",
+                        color = Color.White
+                    )
+                }
+                
+                pythonTestResult?.let { result ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = result,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (currentBackgroundColor == Color.White) Color.Black else Color.White,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 

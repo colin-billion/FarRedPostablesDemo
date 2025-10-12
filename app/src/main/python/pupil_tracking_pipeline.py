@@ -26,12 +26,11 @@ class PupilTrackingPipeline:
     
     def __init__(self, video_path, output_dir="../data/output", frame_interval=1,
                  outlier_method='pixel_threshold', outlier_threshold=20,
-                 smoothing_method='kalman', smoothing_window=None, debug=False):
+                 smoothing_method='kalman', smoothing_window=None):
         """Initialize the complete pipeline"""
         self.video_path = video_path
         self.base_output_dir = output_dir
         self.frame_interval = frame_interval
-        self.debug = debug
         
         # Post-processing parameters
         self.outlier_method = outlier_method
@@ -54,59 +53,6 @@ class PupilTrackingPipeline:
         print(f"   Output: {self.output_dir}")
         print(f"   Frame interval: {frame_interval}")
     
-    def check_video_orientation(self):
-        """Check video orientation and print dimension info for debugging"""
-        import cv2
-        
-        # Open video to check dimensions
-        cap = cv2.VideoCapture(self.video_path)
-        if not cap.isOpened():
-            print("❌ Could not open video for orientation check")
-            return
-        
-        # Get OpenCV reported dimensions
-        reported_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        reported_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
-        # Read first frame to get actual dimensions
-        ret, frame = cap.read()
-        if ret and frame is not None:
-            actual_height, actual_width = frame.shape[:2]
-            
-            print(f"📐 Video dimension check:")
-            print(f"   OpenCV reported: {reported_width}x{reported_height} (width x height)")
-            print(f"   Actual frame: {actual_width}x{actual_height} (width x height)")
-            
-            if actual_width != reported_width or actual_height != reported_height:
-                print(f"⚠️  Dimension mismatch detected!")
-                print(f"   This may cause iris detection issues.")
-                print(f"   Consider rotating the video or adjusting detection parameters.")
-            else:
-                print(f"✅ Dimensions match - no rotation issues detected")
-            
-            # Check if iris detection parameters might be too restrictive
-            min_dimension = min(actual_width, actual_height)
-            # Calculate dynamic parameters (same as in video_pupil_tracker.py)
-            min_radius = max(20, min_dimension // 20)
-            max_radius = min_dimension // 4
-            min_dist = min_radius * 2
-            
-            print(f"📏 Iris detection parameter analysis:")
-            print(f"   Video dimensions: {actual_width}x{actual_height}")
-            print(f"   Dynamic minRadius={min_radius}, maxRadius={max_radius}, minDist={min_dist}")
-            print(f"   Min dimension: {min_dimension}")
-            
-            if min_dimension < 400:
-                print(f"⚠️  Video has very small dimensions - iris detection may be challenging")
-            elif min_dimension < 600:
-                print(f"ℹ️  Video has small dimensions - using scaled parameters")
-            else:
-                print(f"ℹ️  Video has good dimensions - parameters should work well")
-        else:
-            print("❌ Could not read first frame for dimension check")
-        
-        cap.release()
-    
     def run_tracking(self):
         """Run the pupil tracking phase"""
         print(f"\n{'='*60}")
@@ -116,15 +62,11 @@ class PupilTrackingPipeline:
         start_time = time.time()
         
         try:
-            # Check video orientation and dimensions before initializing tracker
-            self.check_video_orientation()
-            
             # Initialize tracker
             tracker = CleanVideoPupilTracker(
                 self.video_path,
                 self.output_dir,
-                self.frame_interval,
-                self.debug
+                self.frame_interval
             )
             
             # Process video
@@ -170,7 +112,7 @@ class PupilTrackingPipeline:
         
         try:
             # Initialize post-processor
-            processor = PupilPostProcessor(self.csv_path, self.output_dir, self.debug)
+            processor = PupilPostProcessor(self.csv_path, self.output_dir)
             
             # Run filtering
             processor.run_filtering(
@@ -314,11 +256,9 @@ Examples:
     parser.add_argument('--outlier_threshold', type=float, default=20,
                        help='Outlier detection threshold (pixels for pixel_threshold, multiplier for others) (default: 20)')
     parser.add_argument('--smoothing_method', choices=['savgol', 'moving_average', 'gaussian', 'kalman'],
-                       default='moving_average', help='Smoothing method (default: moving_average)')
-    parser.add_argument('--smoothing_window', type=int, default=10,
-                       help='Smoothing window length (default: 10 for moving_average)')
-    parser.add_argument('--debug', action='store_true', default=False,
-                       help='Enable debug mode (creates debug visualizations and extra outputs)')
+                       default='kalman', help='Smoothing method (default: kalman)')
+    parser.add_argument('--smoothing_window', type=int,
+                       help='Smoothing window length (auto-determined if not specified)')
     
     # Pipeline control
     parser.add_argument('--tracking_only', action='store_true',
@@ -352,8 +292,7 @@ Examples:
             args.outlier_method,
             args.outlier_threshold,
             args.smoothing_method,
-            args.smoothing_window,
-            args.debug
+            args.smoothing_window
         )
         
         if args.tracking_only:
