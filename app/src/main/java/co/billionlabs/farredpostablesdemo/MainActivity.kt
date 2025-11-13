@@ -182,7 +182,8 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     LaunchedEffect(isCountdown) {
         if (isCountdown && useFrontCamera) {
             // Dim the screen and start countdown
-            screenController.setMinimumBrightness()
+//            screenController.setMinimumBrightness()
+            screenController.setBackgroundColor(Color.Red)
             countdownTime = 5
             
             repeat(5) {
@@ -205,7 +206,7 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 // Phase 1: 0.5 second dim red (already set)
                 sequencePhase = "Dim Red (1s) - Front Camera"
                 currentBackgroundColor = Color.Red
-                screenController.setMinimumBrightness() // Keep minimum for dim red
+//                screenController.setMinimumBrightness() // Keep minimum for dim red
                 delay(500)
                 
                 // Phase 2: 1.5 seconds bright white
@@ -218,7 +219,7 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 // Phase 3: 3 seconds dim red
                 sequencePhase = "Dim Red (3s) - Front Camera"
                 currentBackgroundColor = Color.Red
-                screenController.setMinimumBrightness()
+//                screenController.setMinimumBrightness()
                 screenController.setBackgroundColor(Color.Red)
                 delay(3000)
             } else {
