@@ -1,6 +1,9 @@
 package co.billionlabs.farredpostablesdemo.ui.components
 
+import android.content.ContentValues
 import android.content.Context
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import android.view.ViewGroup
 import androidx.camera.core.*
@@ -245,9 +248,12 @@ private fun stopRecording(recording: Recording?, onStopped: () -> Unit) {
 private fun createVideoFile(context: Context): File {
     val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
     val fileName = "pupil_video_$timeStamp.mp4"
-    val storageDir = File(context.getExternalFilesDir(null), "PupilVideos")
-    if (!storageDir.exists()) {
-        storageDir.mkdirs()
+    val storageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+
+    return File(storageDir, fileName).also {
+        val filePath = it.absolutePath
+        Log.d("CameraPreview", "Created video file: $filePath")
+
+    File(filePath)
     }
-    return File(storageDir, fileName)
 }
