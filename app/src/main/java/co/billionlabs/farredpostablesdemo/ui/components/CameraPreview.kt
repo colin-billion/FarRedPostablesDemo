@@ -1,9 +1,7 @@
 package co.billionlabs.farredpostablesdemo.ui.components
 
-import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
-import android.provider.MediaStore
 import android.util.Log
 import android.view.ViewGroup
 import androidx.camera.core.*
@@ -36,6 +34,12 @@ import java.util.concurrent.Executors
 fun CameraPreview(
     onVideoRecorded: (String) -> Unit,
     onRecordingStateChanged: (Boolean) -> Unit = {},
+    useFrontCamera: Boolean = true,
+    onCameraChanged: (Boolean) -> Unit = {},
+    onCameraReady: (Camera?) -> Unit = {},
+    shouldStartActualRecording: Boolean = false,
+    onRecordButtonPressed: () -> Unit = {},
+    onRecordingCompleted: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -47,7 +51,9 @@ fun CameraPreview(
     var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
     var recording by remember { mutableStateOf<Recording?>(null) }
     var shouldStartRecording by remember { mutableStateOf(false) }
-    
+    var camera by remember { mutableStateOf<Camera?>(null) }
+    var hasProcessedRecording by remember { mutableStateOf(false) }
+
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
     
     DisposableEffect(Unit) {
@@ -56,13 +62,24 @@ fun CameraPreview(
         }
     }
     
-    // Handle recording countdown
-    LaunchedEffect(shouldStartRecording) {
-        if (shouldStartRecording) {
-            isRecording = true
-            recordingTime = 0
-            onRecordingStateChanged(true)
+    // Handle actual recording start
+    LaunchedEffect(shouldStartActualRecording) {
+        if (shouldStartActualRecording && videoCapture != null && !hasProcessedRecording) {
+            hasProcessedRecording = true
+
+            // Start the actual recording
+            startRecording(
+                context,
+                videoCapture!!,
+                onVideoRecorded
+            ) { recordingRef ->
+                recording = recordingRef
+                isRecording = true
+                recordingTime = 0
+                onRecordingStateChanged(true)
+            }
             
+            // Record for 5 seconds (1s + 1s + 3s sequence)
             repeat(5) {
                 delay(1000)
                 recordingTime++
@@ -73,11 +90,18 @@ fun CameraPreview(
                 isRecording = false
                 recordingTime = 0
                 onRecordingStateChanged(false)
+                onRecordingCompleted()
             }
-            shouldStartRecording = false
         }
     }
-    
+
+    // Reset the processed flag when shouldStartActualRecording becomes false
+    LaunchedEffect(shouldStartActualRecording) {
+        if (!shouldStartActualRecording) {
+            hasProcessedRecording = false
+        }
+    }
+
     // Initialize camera when component is first created
     LaunchedEffect(Unit) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -102,13 +126,41 @@ fun CameraPreview(
             update = { previewView ->
                 // Start camera when preview is ready and camera provider is available
                 if (cameraProvider != null) {
-                    startCamera(context, lifecycleOwner, previewView, cameraProvider!!, cameraExecutor) { videoCap ->
+                    startCamera(context, lifecycleOwner, previewView, cameraProvider!!, cameraExecutor, useFrontCamera) { videoCap, cam ->
                         videoCapture = videoCap
+                        camera = cam
+                        onCameraReady(cam)
                     }
                 }
             }
         )
-        
+
+        // Camera toggle button (top right)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            contentAlignment = Alignment.TopEnd
+        ) {
+            IconButton(
+                onClick = {
+                    onCameraChanged(!useFrontCamera)
+                },
+                modifier = Modifier
+                    .background(
+                        Color.Black.copy(alpha = 0.5f),
+                        CircleShape
+                    )
+                    .padding(8.dp)
+            ) {
+                Text(
+                    text = if (useFrontCamera) "🔄" else "🔄",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White
+                )
+            }
+        }
+
         // Recording button overlay
         Box(
             modifier = Modifier
@@ -142,15 +194,9 @@ fun CameraPreview(
                 // Record button
                 Button(
                     onClick = {
-                        if (!isRecording) {
-                            startRecording(
-                                context,
-                                videoCapture,
-                                onVideoRecorded
-                            ) { recordingRef ->
-                                recording = recordingRef
-                                shouldStartRecording = true
-                            }
+                        if (!isRecording && !shouldStartActualRecording && videoCapture != null) {
+                            android.util.Log.d("CameraPreview", "Recording button pressed - preparing for recording")
+                            onRecordButtonPressed()
                         }
                     },
                     modifier = Modifier
@@ -180,10 +226,15 @@ private fun startCamera(
     previewView: PreviewView,
     cameraProvider: ProcessCameraProvider,
     cameraExecutor: ExecutorService,
-    onVideoCaptureReady: (VideoCapture<Recorder>) -> Unit
+    useFrontCamera: Boolean,
+    onVideoCaptureReady: (VideoCapture<Recorder>, Camera) -> Unit
 ) {
     val preview = Preview.Builder().build()
-    val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+    val cameraSelector = if (useFrontCamera) {
+        CameraSelector.DEFAULT_FRONT_CAMERA
+    } else {
+        CameraSelector.DEFAULT_BACK_CAMERA
+    }
     
     val recorder = Recorder.Builder()
         .setQualitySelector(QualitySelector.from(Quality.HD))
@@ -192,7 +243,7 @@ private fun startCamera(
     
     try {
         cameraProvider.unbindAll()
-        cameraProvider.bindToLifecycle(
+        val camera = cameraProvider.bindToLifecycle(
             lifecycleOwner,
             cameraSelector,
             preview,
@@ -200,10 +251,10 @@ private fun startCamera(
         )
         
         preview.setSurfaceProvider(previewView.surfaceProvider)
-        onVideoCaptureReady(videoCapture)
+        onVideoCaptureReady(videoCapture, camera)
         
     } catch (exc: Exception) {
-        Log.e("CameraPreview", "Use case binding failed", exc)
+        android.util.Log.e("CameraPreview", "Use case binding failed", exc)
     }
 }
 
@@ -223,15 +274,15 @@ private fun startRecording(
         .start(ContextCompat.getMainExecutor(context)) { recordEvent ->
             when (recordEvent) {
                 is VideoRecordEvent.Start -> {
-                    Log.d("CameraPreview", "Recording started")
+                    android.util.Log.d("CameraPreview", "Recording started")
                     // Note: recording is not yet available in this callback
                 }
                 is VideoRecordEvent.Finalize -> {
-                    Log.d("CameraPreview", "Recording finalized: ${recordEvent.outputResults.outputUri}")
+                    android.util.Log.d("CameraPreview", "Recording finalized: ${recordEvent.outputResults.outputUri}")
                     onVideoRecorded(outputFile.absolutePath)
                 }
                 is VideoRecordEvent.Status -> {
-                    Log.d("CameraPreview", "Recording status: ${recordEvent.recordingStats.recordedDurationNanos}")
+                    android.util.Log.d("CameraPreview", "Recording status: ${recordEvent.recordingStats.recordedDurationNanos}")
                 }
             }
         }
@@ -245,6 +296,7 @@ private fun stopRecording(recording: Recording?, onStopped: () -> Unit) {
     onStopped()
 }
 
+
 private fun createVideoFile(context: Context): File {
     val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
     val fileName = "pupil_video_$timeStamp.mp4"
@@ -252,8 +304,25 @@ private fun createVideoFile(context: Context): File {
 
     return File(storageDir, fileName).also {
         val filePath = it.absolutePath
-        Log.d("CameraPreview", "Created video file: $filePath")
+        android.util.Log.d("CameraPreview", "Created video file: $filePath")
 
-    File(filePath)
+        File(filePath)
+    }
+}
+
+// Flash control functions
+fun enableFlash(camera: Camera?) {
+    camera?.let {
+        val cameraControl = it.cameraControl
+        cameraControl.enableTorch(true)
+        android.util.Log.d("CameraPreview", "Flash enabled")
+    }
+}
+
+fun disableFlash(camera: Camera?) {
+    camera?.let {
+        val cameraControl = it.cameraControl
+        cameraControl.enableTorch(false)
+        android.util.Log.d("CameraPreview", "Flash disabled")
     }
 }

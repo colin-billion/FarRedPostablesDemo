@@ -152,36 +152,62 @@ class PupilTrackingHelper {
      * Get pupil data from the processed results
      * @param outputDir Directory where processing results were saved
      * @param videoName Name of the video file (without extension)
-     * @return Pupil data as a list of maps
+     * @return Map containing pupil data and image path
      */
-    fun getPupilTimeSeries(outputDir: String, videoName: String): List<Map<String, Any>> {
+    fun getPupilTimeSeries(outputDir: String, videoName: String): Map<String, Any> {
         try {
             val pandas = python.getModule("pandas")
             val os = python.getModule("os")
             val path = python.getModule("pathlib").callAttr("Path")
             
             // Construct the CSV file path
-            val csvPath = path.callAttr("join", outputDir, videoName, "pupil_data_filtered_${videoName}.csv")
+            val csvPath = os.get("path")?.callAttr("join", outputDir, "pupil_data_filtered_${videoName}.csv")
             
             android.util.Log.d("PupilTrackingHelper", "Loading pupil data from: $csvPath")
             
             // Check if file exists
-            if (!os.callAttr("path", "exists", csvPath).toBoolean()) {
+            val fileExists = os.get("path")?.callAttr("exists", csvPath)?.toBoolean() ?: false
+            if (csvPath == null || !fileExists) {
                 android.util.Log.w("PupilTrackingHelper", "Filtered data not found, trying clean data")
                 // Try the clean data instead
-                val cleanCsvPath = path.callAttr("join", outputDir, videoName, "pupil_data_clean_${videoName}.csv")
-                if (os.callAttr("path", "exists", cleanCsvPath).toBoolean()) {
-                    return loadPupilDataFromCsv(pandas, cleanCsvPath.toString())
+                val cleanCsvPath = os.get("path")?.callAttr("join", outputDir, "pupil_data_clean_${videoName}.csv")
+                val cleanFileExists = os.get("path")?.callAttr("exists", cleanCsvPath)?.toBoolean() ?: false
+                if (cleanCsvPath != null && cleanFileExists) {
+                    val pupilData = loadPupilDataFromCsv(pandas, cleanCsvPath.toString())
+                    val imagePath = os.get("path")?.callAttr("join", outputDir, "pupil_size_filtered_${videoName}.png")?.toString()
+                    return mapOf(
+                        "pupilData" to pupilData,
+                        "imagePath" to (imagePath ?: "")
+                    )
                 } else {
                     android.util.Log.e("PupilTrackingHelper", "No pupil data files found")
-                    return emptyList()
+                    return mapOf(
+                        "pupilData" to emptyList<Map<String, Any>>(),
+                        "imagePath" to ""
+                    )
                 }
             }
             
-            return loadPupilDataFromCsv(pandas, csvPath.toString())
+            if (csvPath != null) {
+                val pupilData = loadPupilDataFromCsv(pandas, csvPath.toString())
+                val imagePath = os.get("path")?.callAttr("join", outputDir, "pupil_size_filtered_${videoName}.png")?.toString()
+                return mapOf(
+                    "pupilData" to pupilData,
+                    "imagePath" to (imagePath ?: "")
+                )
+            } else {
+                android.util.Log.e("PupilTrackingHelper", "Failed to construct CSV path")
+                return mapOf(
+                    "pupilData" to emptyList<Map<String, Any>>(),
+                    "imagePath" to ""
+                )
+            }
         } catch (e: Exception) {
             android.util.Log.e("PupilTrackingHelper", "Error loading pupil data: ${e.message}", e)
-            return emptyList()
+            return mapOf(
+                "pupilData" to emptyList<Map<String, Any>>(),
+                "imagePath" to ""
+            )
         }
     }
     

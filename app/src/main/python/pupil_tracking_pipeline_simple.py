@@ -18,16 +18,37 @@ from pupil_post_processor_simple import SimplePupilPostProcessor
 class SimplePupilTrackingPipeline:
     """Simplified pipeline for pupil tracking and analysis"""
     
-    def __init__(self, video_path, output_dir="../data/output", frame_interval=1):
+    def __init__(self, video_path, output_dir=None, frame_interval=1):
         """Initialize the simplified pipeline"""
         self.video_path = video_path
-        self.base_output_dir = output_dir
         self.frame_interval = frame_interval
+        
+        # Use Android app directory if no output_dir specified
+        if output_dir is None:
+            # Use Android app's internal directory
+            # This is the standard path for Chaquopy apps
+            app_files_dir = "/data/data/co.billionlabs.farredpostablesdemo/files"
+            self.base_output_dir = os.path.join(app_files_dir, "pupil_output")
+        else:
+            self.base_output_dir = output_dir
         
         # Create video-specific output directory
         video_name = Path(video_path).stem
-        self.output_dir = os.path.join(output_dir, video_name)
-        os.makedirs(self.output_dir, exist_ok=True)
+        self.output_dir = os.path.join(self.base_output_dir, video_name)
+        
+        print(f"🔧 Debug: base_output_dir = {self.base_output_dir}")
+        print(f"🔧 Debug: output_dir = {self.output_dir}")
+        
+        try:
+            os.makedirs(self.output_dir, exist_ok=True)
+            print(f"✅ Successfully created output directory: {self.output_dir}")
+        except Exception as e:
+            print(f"❌ Failed to create output directory: {e}")
+            # Try alternative directory
+            alt_dir = "/data/data/co.billionlabs.farredpostablesdemo/cache/pupil_output"
+            self.output_dir = os.path.join(alt_dir, video_name)
+            print(f"🔧 Trying alternative directory: {self.output_dir}")
+            os.makedirs(self.output_dir, exist_ok=True)
         
         # Pipeline state
         self.tracking_complete = False
@@ -179,7 +200,7 @@ class SimplePupilTrackingPipeline:
             else:
                 print(f"   ❌ {filename} (missing)")
 
-def main(video_path):
+def main(video_path, output_dir=None):
     """Main function for Chaquopy integration"""
     try:
         # Check if video file exists
@@ -194,15 +215,17 @@ def main(video_path):
         
         print(f"📹 Processing video: {video_path}")
         
-        # Initialize pipeline
-        pipeline = SimplePupilTrackingPipeline(video_path)
+        # Initialize pipeline with Android-compatible output directory
+        pipeline = SimplePupilTrackingPipeline(video_path, output_dir)
+        
+        print(f"📁 Output directory: {pipeline.output_dir}")
         
         # Run complete pipeline
         success = pipeline.run_complete_pipeline()
         
         if success:
             print(f"\n🎯 Simple pipeline completed successfully!")
-            print(f"📁 Output directory: {pipeline.output_dir}")
+            print(f"📁 Results saved to: {pipeline.output_dir}")
             return pipeline.output_dir
         else:
             print(f"\n❌ Simple pipeline failed!")

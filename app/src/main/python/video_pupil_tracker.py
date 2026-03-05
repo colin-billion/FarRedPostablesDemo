@@ -38,10 +38,89 @@ class CleanVideoPupilTracker:
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
+        print(f"OpenCV video properties: frames={self.total_frames}, fps={self.fps}, size={self.width}x{self.height}")
+        
+        # Android-specific fix: If OpenCV fails to read properties, try alternative methods
+        if self.fps <= 0 or self.total_frames <= 0 or self.width <= 0 or self.height <= 0:
+            print("OpenCV failed to read video properties, trying alternative method...")
+            
+            # Try to read a few frames to estimate properties
+            frame_count = 0
+            test_fps = 30.0  # Default assumption
+            detected_width = 0
+            detected_height = 0
+            
+            # Try to read frames to count them and get dimensions
+            # First, try to get just the first frame for dimensions
+            ret, first_frame = self.cap.read()
+            if ret and first_frame is not None:
+                detected_height, detected_width = first_frame.shape[:2]
+                print(f"Detected dimensions from first frame: {detected_width}x{detected_height}")
+                frame_count = 1
+                
+                # Now count remaining frames
+                while True:
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        break
+                    frame_count += 1
+                    if frame_count > 1000:  # Safety limit
+                        break
+                
+                # Reset video capture to beginning
+                self.cap.release()
+                self.cap = cv2.VideoCapture(video_path)
+                if not self.cap.isOpened():
+                    raise ValueError(f"Could not reopen video: {video_path}")
+            else:
+                print("Error: Could not read first frame for dimensions")
+                raise ValueError("Invalid video file - cannot read frames")
+            
+            if frame_count > 0:
+                self.total_frames = frame_count
+                print(f"Estimated frame count: {self.total_frames}")
+            else:
+                print("Error: Could not read any frames from video")
+                raise ValueError("Invalid video file - no frames detected")
+            
+            # Use detected dimensions if available
+            if detected_width > 0 and detected_height > 0:
+                self.width = detected_width
+                self.height = detected_height
+                print(f"Using detected dimensions: {self.width}x{self.height}")
+            else:
+                # Fallback to common mobile video dimensions
+                self.width = 1280
+                self.height = 720
+                print(f"Using fallback dimensions: {self.width}x{self.height}")
+            
+            # Use default FPS if not detected
+            if self.fps <= 0:
+                self.fps = test_fps
+                print(f"Using default FPS: {self.fps}")
+        
+        # Final validation
+        if self.fps <= 0:
+            print(f"Warning: Invalid FPS ({self.fps}), using default 30 FPS")
+            self.fps = 30.0
+        
+        if self.total_frames <= 0:
+            print(f"Error: Invalid frame count ({self.total_frames})")
+            raise ValueError("Invalid video file - no frames detected")
+        
+        if self.width <= 0 or self.height <= 0:
+            print(f"Error: Invalid video dimensions ({self.width}x{self.height})")
+            raise ValueError("Invalid video file - invalid dimensions")
+        
         # Calculate frames to process
         self.frames_to_process = list(range(0, self.total_frames, frame_interval))
         
-        print(f"Video info: {self.total_frames} frames, {self.fps:.2f} FPS, {self.total_frames/self.fps:.2f}s duration")
+        # Calculate duration safely
+        try:
+            duration = self.total_frames / self.fps if self.fps > 0 else 0
+            print(f"Video info: {self.total_frames} frames, {self.fps:.2f} FPS, {duration:.2f}s duration")
+        except ZeroDivisionError:
+            print(f"Video info: {self.total_frames} frames, {self.fps:.2f} FPS, 0.00s duration (FPS error)")
         print(f"Resolution: {self.width}x{self.height}")
         print(f"Processing {len(self.frames_to_process)} frames (every {frame_interval} frame(s))")
         
@@ -66,339 +145,88 @@ class CleanVideoPupilTracker:
         
         print(f"Will create output video: {output_video_path}")
     
-    def detect_iris(self, image):
-        """Detect iris using the working method from debug script"""
-        # Preprocess for iris detection
+    def detect_pupil_red_channel(self, image):
+        """Detect pupil using red channel only - simple darkest pixel approach"""
+        # Extract only the red channel
         if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            red_channel = image[:, :, 2]  # BGR format, so index 2 is red
         else:
-            gray = image.copy()
+            # If already grayscale, use as is
+            red_channel = image.copy()
         
-        # Apply median blur to reduce noise
-        blurred = cv2.medianBlur(gray, 5)
+        # Find the darkest pixel value
+        darkest_value = np.min(red_channel)
         
-        # Apply CLAHE for local contrast enhancement
-        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(blurred)
+        # Add buffer of +20 brighter than darkest
+        threshold_value = darkest_value + 20
         
-        # Apply additional contrast enhancement
-        enhanced = cv2.convertScaleAbs(enhanced, alpha=3.0, beta=50)
+        # Find all pixels darker than threshold
+        pupil_mask = red_channel <= threshold_value
         
-        # Find Hough circles
-        circles = cv2.HoughCircles(
-            enhanced,
-            cv2.HOUGH_GRADIENT,
-            dp=1,
-            minDist=150,
-            param1=50,
-            param2=40,
-            minRadius=120,
-            maxRadius=250
-        )
+        # Get coordinates of pupil pixels
+        pupil_coords = np.where(pupil_mask)
         
-        if circles is None:
+        if len(pupil_coords[0]) == 0:
             return None
         
-        circles = np.round(circles[0, :]).astype("int")
+        # Convert to (x, y) format
+        y_coords, x_coords = pupil_coords
+        pupil_points = np.column_stack((x_coords, y_coords))
         
-        # Score each circle based on intensity differences
-        best_circle = None
-        best_score = -float('inf')
+        # Find the best circle around these points
+        pupil_circle = self.fit_circle_to_points(pupil_points)
         
-        for circle in circles:
-            x, y, r = circle
-            score = self.score_iris_circle(enhanced, x, y, r)
-            
-            if score > best_score:
-                best_score = score
-                best_circle = circle
-        
-        if best_circle is None:
+        if pupil_circle is None:
             return None
         
-        x, y, r = best_circle
-        return {
-            'center': (x, y),
-            'radius': r,
-            'score': best_score
-        }
-    
-    def score_iris_circle(self, image, x, y, r):
-        """Score an iris circle based on intensity differences"""
-        h, w = image.shape
-        
-        # Check if circle is within image bounds
-        if x - r < 0 or x + r >= w or y - r < 0 or y + r >= h:
-            return -float('inf')
-        
-        # Create masks for inner and outer rings
-        inner_mask = np.zeros((h, w), dtype=np.uint8)
-        outer_mask = np.zeros((h, w), dtype=np.uint8)
-        
-        # Inner ring (iris area)
-        cv2.circle(inner_mask, (x, y), r - 5, 255, -1)
-        cv2.circle(inner_mask, (x, y), r - 15, 0, -1)
-        
-        # Outer ring (sclera area)
-        cv2.circle(outer_mask, (x, y), r + 5, 255, -1)
-        cv2.circle(outer_mask, (x, y), r - 5, 0, -1)
-        
-        # Calculate mean intensities
-        inner_intensity = cv2.mean(image, inner_mask)[0]
-        outer_intensity = cv2.mean(image, outer_mask)[0]
-        
-        # Calculate intensity difference (iris should be darker than sclera)
-        intensity_diff = outer_intensity - inner_intensity
-        
-        # Calculate consistency within rings
-        inner_std = np.std(image[inner_mask > 0])
-        outer_std = np.std(image[outer_mask > 0])
-        consistency = 1.0 / (1.0 + inner_std + outer_std)
-        
-        # Combined score
-        score = 0.7 * intensity_diff + 0.15 * consistency
-        
-        return score
-    
-    def detect_pupil(self, image, iris_result):
-        """Detect pupil using the working method from debug script"""
-        iris_center = iris_result['center']
-        iris_radius = iris_result['radius']
-        
-        # Preprocess for pupil detection
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image.copy()
-        
-        # Apply CLAHE for local contrast enhancement
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
-        
-        # Get iris baseline intensity from circle 40 pixels inside iris
-        baseline_intensity = self.get_iris_baseline_intensity(enhanced, iris_center, iris_radius)
-        
-        # Find dark pixels with adaptive thresholding
-        dark_coords, threshold_used = self.find_dark_pixels_adaptive(
-            enhanced, iris_center, iris_radius, baseline_intensity)
-        
-        if len(dark_coords[0]) == 0:
-            return None
-        
-        # Find largest cluster
-        largest_cluster_points, all_labels = self.find_largest_cluster(dark_coords)
-        
-        if largest_cluster_points is None:
-            return None
-        
-        # Find radius around iris center
-        pupil_circle = self.find_radius_around_iris_center(largest_cluster_points, iris_center)
+        # Store debug info for visualization
+        pupil_circle['debug_mask'] = pupil_mask
+        pupil_circle['threshold_value'] = threshold_value
+        pupil_circle['darkest_value'] = darkest_value
         
         return pupil_circle
     
-    def get_iris_baseline_intensity(self, image, iris_center, iris_radius):
-        """Get baseline iris intensity from circle 40 pixels inside iris"""
-        x, y = iris_center
-        
-        # Create mask for circle 40 pixels inside iris (80 pixels diameter smaller)
-        inner_circle_radius = iris_radius - 40
-        if inner_circle_radius <= 0:
-            inner_circle_radius = iris_radius // 2  # Fallback to half radius
-        
-        inner_circle_mask = np.zeros(image.shape, dtype=np.uint8)
-        cv2.circle(inner_circle_mask, (x, y), inner_circle_radius, 255, -1)
-        
-        # Calculate mean intensity in the inner circle
-        baseline_intensity = cv2.mean(image, inner_circle_mask)[0]
-        
-        return baseline_intensity
-    
-    def find_dark_pixels_adaptive(self, image, iris_center, iris_radius, baseline_intensity):
-        """Find dark pixels with hybrid approach: 5th percentile core + gradient boundary expansion"""
-        x, y = iris_center
-        max_pupil_radius = int(iris_radius * 0.8)
-        
-        # Create mask for iris area
-        iris_mask = np.zeros(image.shape, dtype=np.uint8)
-        cv2.circle(iris_mask, (x, y), max_pupil_radius, 255, -1)
-        
-        # Get all pixels within iris area that are darker than baseline
-        iris_pixels = image[iris_mask > 0]
-        dark_iris_pixels = iris_pixels[iris_pixels < baseline_intensity]
-        
-        if len(dark_iris_pixels) == 0:
-            return (np.array([]), np.array([])), baseline_intensity
-        
-        # Use 5% percentile for core dark pixels
-        threshold_core = np.percentile(dark_iris_pixels, 5)
-        
-        # Find core dark pixels
-        core_dark_pixels = (image < threshold_core) & (iris_mask > 0)
-        core_coords = np.where(core_dark_pixels)
-        
-        if len(core_coords[0]) == 0:
-            return (np.array([]), np.array([])), threshold_core
-        
-        # Expand from core using gradient analysis
-        expanded_coords = self.expand_pupil_boundary_gradient(
-            image, iris_center, iris_radius, core_coords, baseline_intensity, iris_mask
-        )
-        
-        return expanded_coords, threshold_core
-    
-    def expand_pupil_boundary_gradient(self, image, iris_center, iris_radius, core_coords, baseline_intensity, iris_mask):
-        """Expand pupil boundary using gradient analysis from core dark pixels"""
-        if len(core_coords[0]) == 0:
-            return core_coords
-        
-        # Convert core coordinates to (x, y) format
-        y_coords, x_coords = core_coords
-        core_points = np.column_stack((x_coords, y_coords))
-        
-        # Calculate core area to determine if pupil is small
-        core_area = len(core_coords[0])
-        iris_area = np.pi * iris_radius ** 2
-        core_ratio = core_area / iris_area
-        
-        # Create expanded mask starting with core pixels
-        expanded_mask = np.zeros(image.shape, dtype=np.uint8)
-        expanded_mask[core_coords] = 255
-        
-        # Define search area (within iris, excluding glare regions)
-        search_mask = iris_mask.copy()
-        # Exclude glare regions (pixels brighter than baseline)
-        search_mask[image >= baseline_intensity] = 0
-        
-        # Use morphological operations to expand from core
-        # This will grow the region while respecting intensity boundaries
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        
-        # Adjust expansion based on core size - be more conservative for small pupils
-        if core_ratio < 0.05:  # Very small pupil
-            max_iterations = 5
-            # Use more restrictive threshold for small pupils
-            expansion_threshold = baseline_intensity * 0.8
-        elif core_ratio < 0.1:  # Small pupil
-            max_iterations = 10
-            expansion_threshold = baseline_intensity * 0.9
-        else:  # Normal/large pupil
-            max_iterations = 20
-            expansion_threshold = baseline_intensity
-        
-        # Iteratively expand the region
-        for i in range(max_iterations):
-            # Dilate the current region
-            dilated = cv2.dilate(expanded_mask, kernel, iterations=1)
-            
-            # Only keep pixels that are:
-            # 1. In the search area (iris, not glare)
-            # 2. Darker than expansion threshold (more restrictive for small pupils)
-            # 3. Not already included
-            new_pixels = (dilated > 0) & (search_mask > 0) & (image < expansion_threshold) & (expanded_mask == 0)
-            
-            # Check if we should stop expanding
-            if not np.any(new_pixels):
-                break
-                
-            # Add new pixels to expanded region
-            expanded_mask[new_pixels] = 255
-        
-        # Convert back to coordinate format
-        expanded_coords = np.where(expanded_mask > 0)
-        
-        return expanded_coords
-    
-    def find_largest_cluster(self, dark_coords):
-        """Find the largest cluster of dark pixels using OpenCV connected components"""
-        if len(dark_coords[0]) == 0:
-            return None, None
-        
-        # Convert to (x, y) coordinates
-        y_coords, x_coords = dark_coords
-        points = np.column_stack((x_coords, y_coords))
-        
-        # Create a binary mask from the dark coordinates
-        # Find bounds of the points
-        min_x, max_x = int(np.min(x_coords)), int(np.max(x_coords))
-        min_y, max_y = int(np.min(y_coords)), int(np.max(y_coords))
-        
-        # Create binary mask
-        mask = np.zeros((max_y - min_y + 1, max_x - min_x + 1), dtype=np.uint8)
-        mask[y_coords - min_y, x_coords - min_x] = 255
-        
-        # Use OpenCV connected components to find clusters
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
-        
-        # Find the largest cluster (excluding background with label 0)
-        if num_labels <= 1:  # Only background
-            return None, None
-        
-        # Find largest cluster by area
-        largest_cluster_label = 1  # Start with first non-background component
-        largest_area = stats[1, cv2.CC_STAT_AREA]
-        
-        for label in range(2, num_labels):
-            area = stats[label, cv2.CC_STAT_AREA]
-            if area > largest_area:
-                largest_area = area
-                largest_cluster_label = label
-        
-        # Filter out small clusters (less than 50 pixels)
-        if largest_area < 50:
-            return None, None
-        
-        # Get points in the largest cluster
-        cluster_mask = (labels == largest_cluster_label)
-        cluster_y, cluster_x = np.where(cluster_mask)
-        
-        # Convert back to original coordinates
-        cluster_points = np.column_stack((cluster_x + min_x, cluster_y + min_y))
-        
-        # Create labels array for compatibility (all points in largest cluster get label 0, others -1)
-        point_labels = np.full(len(points), -1)
-        for i, (px, py) in enumerate(points):
-            if cluster_mask[py - min_y, px - min_x]:
-                point_labels[i] = 0
-        
-        return cluster_points, point_labels
-    
-    def find_radius_around_iris_center(self, cluster_points, iris_center):
-        """Find radius around iris center that encompasses the cluster"""
-        if len(cluster_points) == 0:
+    def fit_circle_to_points(self, points):
+        """Fit the best circle around a set of points"""
+        if len(points) < 3:
             return None
         
-        # Calculate distances from iris center to all cluster points
-        distances = np.sqrt(np.sum((cluster_points - iris_center)**2, axis=1))
+        # Calculate centroid as circle center
+        center_x = np.mean(points[:, 0])
+        center_y = np.mean(points[:, 1])
+        center = (int(center_x), int(center_y))
+        
+        # Calculate distances from center to all points
+        distances = np.sqrt((points[:, 0] - center_x)**2 + (points[:, 1] - center_y)**2)
         
         # Use 90th percentile as radius to avoid outliers
         radius = int(np.percentile(distances, 90))
         
+        # Ensure minimum radius
+        if radius < 5:
+            radius = 5
+        
         return {
-            'center': iris_center,
-            'radius': radius
+            'center': center,
+            'radius': radius,
+            'points': points,
+            'num_points': len(points)
         }
     
     def process_video(self):
-        """Process the entire video"""
-        frame_idx = 0
-        processed_count = 0
-        failed_count = 0
-        
-        # Detect iris once at the beginning
-        print("Detecting iris from first frame...")
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-        ret, first_frame = self.cap.read()
-        
-        if not ret:
-            print("Error: Could not read first frame")
+        """Process the entire video using red-channel pupil detection"""
+        try:
+            frame_idx = 0
+            processed_count = 0
+            failed_count = 0
+            
+            print("Starting red-channel pupil detection...")
+            
+        except Exception as e:
+            print(f"Error in process_video setup: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-        
-        iris_result = self.detect_iris(first_frame)
-        if iris_result is None:
-            print("Error: Could not detect iris in first frame")
-            return False
-        
-        print(f"Fixed iris: center={iris_result['center']}, radius={iris_result['radius']}")
         
         for frame_number in self.frames_to_process:
             # Set frame position
@@ -410,43 +238,62 @@ class CleanVideoPupilTracker:
                 failed_count += 1
                 continue
             
-            # Detect pupil using fixed iris
-            pupil_result = self.detect_pupil(frame, iris_result)
+            # Detect pupil using red channel method
+            pupil_result = self.detect_pupil_red_channel(frame)
             if pupil_result is None:
                 print(f"Failed to detect pupil in frame {frame_number}")
                 failed_count += 1
                 continue
             
-            # Store tracking data
-            timestamp = frame_number / self.fps
+            # Validate pupil detection
             pupil_radius = pupil_result['radius']
+            if pupil_radius <= 0:
+                print(f"Invalid pupil radius in frame {frame_number}: {pupil_radius}")
+                failed_count += 1
+                continue
+            
+            # Store tracking data with error handling
+            try:
+                timestamp = frame_number / self.fps
+                if not np.isfinite(timestamp):
+                    print(f"Invalid timestamp in frame {frame_number}: {timestamp}")
+                    timestamp = 0.0
+            except ZeroDivisionError:
+                print(f"Zero division error calculating timestamp in frame {frame_number} - FPS: {self.fps}")
+                timestamp = 0.0
+            
             pupil_diameter = pupil_radius * 2
             pupil_area = np.pi * pupil_radius ** 2
-            iris_pupil_ratio = pupil_radius / iris_result['radius']
             
             self.tracking_data.append({
                 'frame_idx': frame_number,
                 'timestamp': timestamp,
-                'iris_center_x': iris_result['center'][0],
-                'iris_center_y': iris_result['center'][1],
-                'iris_radius': iris_result['radius'],
                 'pupil_center_x': pupil_result['center'][0],
                 'pupil_center_y': pupil_result['center'][1],
                 'pupil_radius': pupil_radius,
                 'pupil_diameter': pupil_diameter,
                 'pupil_area': pupil_area,
-                'iris_pupil_ratio': iris_pupil_ratio,
-                'detection_method': 'clean_debug_based'
+                'detection_method': 'red_channel_darkest',
+                'threshold_value': pupil_result['threshold_value'],
+                'darkest_value': pupil_result['darkest_value'],
+                'num_points': pupil_result['num_points']
             })
             
             # Create visualization frame
             vis_frame = self.create_visualization_frame(
-                frame, iris_result, pupil_result, frame_number, timestamp, pupil_radius
+                frame, pupil_result, frame_number, timestamp, pupil_radius
             )
             
             # Write to output video
-            if self.video_writer:
-                self.video_writer.write(vis_frame)
+            if self.video_writer and self.video_writer.isOpened():
+                try:
+                    self.video_writer.write(vis_frame)
+                    if frame_number % 30 == 0:  # Every 30 frames
+                        print(f"  Written frame {frame_number} to video")
+                except Exception as e:
+                    print(f"  Error writing frame {frame_number} to video: {e}")
+            elif self.video_writer:
+                print(f"  Video writer not opened, skipping frame {frame_number}")
             
             processed_count += 1
             
@@ -457,7 +304,14 @@ class CleanVideoPupilTracker:
         # Cleanup
         self.cap.release()
         if self.video_writer:
-            self.video_writer.release()
+            print(f"Releasing video writer...")
+            try:
+                self.video_writer.release()
+                print(f"✅ Video writer released successfully")
+            except Exception as e:
+                print(f"❌ Error releasing video writer: {e}")
+        else:
+            print(f"⚠️  No video writer to release")
         
         print(f"\nProcessing complete!")
         print(f"Successfully processed: {processed_count} frames")
@@ -466,15 +320,9 @@ class CleanVideoPupilTracker:
         
         return processed_count > 0
     
-    def create_visualization_frame(self, frame, iris_result, pupil_result, frame_idx, timestamp, pupil_radius):
-        """Create visualization frame with detection overlays"""
+    def create_visualization_frame(self, frame, pupil_result, frame_idx, timestamp, pupil_radius):
+        """Create visualization frame with red-channel pupil detection overlays"""
         vis_frame = frame.copy()
-        
-        # Draw iris circle
-        iris_center = iris_result['center']
-        iris_radius = iris_result['radius']
-        cv2.circle(vis_frame, iris_center, iris_radius, (0, 255, 0), 3)  # Green for iris
-        cv2.circle(vis_frame, iris_center, 5, (0, 255, 0), -1)
         
         # Draw pupil circle
         pupil_center = pupil_result['center']
@@ -482,10 +330,21 @@ class CleanVideoPupilTracker:
         cv2.circle(vis_frame, pupil_center, pupil_radius, (0, 255, 255), 3)  # Yellow for pupil
         cv2.circle(vis_frame, pupil_center, 3, (0, 255, 255), -1)
         
+        # Highlight detected pupil pixels in red
+        debug_mask = pupil_result['debug_mask']
+        vis_frame[debug_mask] = [0, 0, 255]  # Red highlight for detected pixels
+        
         # Add text information
         info_text = f"Frame: {frame_idx} | Time: {timestamp:.2f}s | Pupil r: {pupil_radius}px"
         cv2.putText(vis_frame, info_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(vis_frame, "CLEAN DEBUG-BASED", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # Add detection method and threshold info
+        method_text = f"RED CHANNEL | Darkest: {pupil_result['darkest_value']} | Threshold: {pupil_result['threshold_value']}"
+        cv2.putText(vis_frame, method_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        
+        # Add pixel count info
+        pixel_text = f"Detected pixels: {pupil_result['num_points']}"
+        cv2.putText(vis_frame, pixel_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         
         return vis_frame
     
@@ -519,7 +378,7 @@ class CleanVideoPupilTracker:
         ax1.plot(df['timestamp'], df['pupil_radius'], 'b-', linewidth=2, label='Pupil Radius')
         ax1.set_xlabel('Time (seconds)')
         ax1.set_ylabel('Pupil Radius (pixels)')
-        ax1.set_title(f'Clean Pupil Size Tracking - {video_name}')
+        ax1.set_title(f'Red Channel Pupil Size Tracking - {video_name}')
         ax1.grid(True, alpha=0.3)
         ax1.legend()
         
@@ -542,7 +401,7 @@ class CleanVideoPupilTracker:
         """Save tracking statistics"""
         df = pd.DataFrame(self.tracking_data)
         
-        stats_text = f"""Clean Pupil Tracking Statistics - {video_name}
+        stats_text = f"""Red Channel Pupil Tracking Statistics - {video_name}
 ============================================================
 
 Total frames processed: {len(df)}
@@ -550,7 +409,7 @@ Failed frames: 0
 Success rate: 100.0%
 
 Detection Methods:
-  clean_debug_based: {len(df)} frames (100.0%)
+  red_channel_darkest: {len(df)} frames (100.0%)
 
 Pupil Diameter:
   mean: {df['pupil_diameter'].mean():.2f}
@@ -573,12 +432,10 @@ Pupil Area:
   max: {df['pupil_area'].max():.2f}
   range: {df['pupil_area'].max() - df['pupil_area'].min():.2f}
 
-Iris Pupil Ratio:
-  mean: {df['iris_pupil_ratio'].mean():.2f}
-  std: {df['iris_pupil_ratio'].std():.2f}
-  min: {df['iris_pupil_ratio'].min():.2f}
-  max: {df['iris_pupil_ratio'].max():.2f}
-  range: {df['iris_pupil_ratio'].max() - df['iris_pupil_ratio'].min():.2f}
+Detection Parameters:
+  darkest_value: mean={df['darkest_value'].mean():.1f}, std={df['darkest_value'].std():.1f}
+  threshold_value: mean={df['threshold_value'].mean():.1f}, std={df['threshold_value'].std():.1f}
+  detected_pixels: mean={df['num_points'].mean():.0f}, std={df['num_points'].std():.0f}
 """
         
         stats_path = os.path.join(self.output_dir, f"pupil_stats_clean_{video_name}.txt")

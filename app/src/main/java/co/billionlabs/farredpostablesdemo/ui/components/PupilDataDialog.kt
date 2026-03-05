@@ -1,22 +1,26 @@
 package co.billionlabs.farredpostablesdemo.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import android.graphics.BitmapFactory
 import kotlin.math.pow
 
 @Composable
 fun PupilDataDialog(
     pupilData: List<Map<String, Any>>,
+    imagePath: String? = null,
     onDismiss: () -> Unit
 ) {
     if (pupilData.isEmpty()) {
@@ -64,24 +68,13 @@ fun PupilDataDialog(
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                // Statistics
-                PupilStatistics(pupilData = pupilData)
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                // Data table
-                Text(
-                    text = "Pupil Size Over Time",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                PupilDataTable(
-                    pupilData = pupilData,
-                    modifier = Modifier.weight(1f)
-                )
+                // Pupil Size Chart Image
+                if (imagePath != null) {
+                    PupilSizeChart(imagePath = imagePath)
+                } else {
+                    // Fallback to statistics if no image
+                    PupilStatistics(pupilData = pupilData)
+                }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
@@ -91,6 +84,72 @@ fun PupilDataDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Close")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PupilSizeChart(imagePath: String) {
+    val context = LocalContext.current
+    var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    
+    LaunchedEffect(imagePath) {
+        try {
+            val file = java.io.File(imagePath)
+            if (file.exists()) {
+                bitmap = BitmapFactory.decodeFile(imagePath)
+                if (bitmap == null) {
+                    errorMessage = "Failed to load image"
+                }
+            } else {
+                errorMessage = "Image file not found: $imagePath"
+            }
+        } catch (e: Exception) {
+            errorMessage = "Error loading image: ${e.message}"
+        }
+    }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Text(
+                text = "Pupil Size Chart",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            when {
+                bitmap != null -> {
+                    Image(
+                        bitmap = bitmap!!.asImageBitmap(),
+                        contentDescription = "Pupil Size Chart",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(500.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                }
+                errorMessage != null -> {
+                    Text(
+                        text = errorMessage!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                else -> {
+                    Text(
+                        text = "Loading chart...",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
         }
@@ -171,75 +230,4 @@ private fun StatisticItem(label: String, value: String) {
     }
 }
 
-@Composable
-private fun PupilDataTable(
-    pupilData: List<Map<String, Any>>,
-    modifier: Modifier = Modifier
-) {
-    val scrollState = rememberScrollState()
-    
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                Text("Frame", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                Text("Time (s)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                Text("Pupil Radius", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                Text("Diameter", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-            }
-            
-            // Data rows (show first 50 rows to avoid performance issues)
-            pupilData.take(50).forEach { data ->
-                val frameIdx = data["frame_idx"]?.toString() ?: "N/A"
-                val timestamp = data["timestamp"]?.let { 
-                    if (it is Double) String.format("%.2f", it) else it.toString() 
-                } ?: "N/A"
-                val pupilRadius = data["pupil_radius"]?.let {
-                    if (it is Double) String.format("%.2f", it) else it.toString()
-                } ?: "N/A"
-                val pupilDiameter = data["pupil_diameter"]?.let {
-                    if (it is Double) String.format("%.2f", it) else it.toString()
-                } ?: "N/A"
-                
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            if (data == pupilData.first()) Color.Transparent 
-                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                        )
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    Text(frameIdx, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    Text(timestamp, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    Text(pupilRadius, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    Text(pupilDiameter, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                }
-            }
-            
-            if (pupilData.size > 50) {
-                Text(
-                    text = "... and ${pupilData.size - 50} more rows",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(8.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
 

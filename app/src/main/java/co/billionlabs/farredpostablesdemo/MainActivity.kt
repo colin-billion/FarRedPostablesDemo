@@ -23,6 +23,8 @@ import androidx.core.content.ContextCompat
 import co.billionlabs.farredpostablesdemo.ui.theme.FarRedPostablesDemoTheme
 import co.billionlabs.farredpostablesdemo.ui.components.CameraPreview
 import co.billionlabs.farredpostablesdemo.ui.components.PupilDataDialog
+import co.billionlabs.farredpostablesdemo.ui.components.enableFlash
+import co.billionlabs.farredpostablesdemo.ui.components.disableFlash
 import co.billionlabs.farredpostablesdemo.utils.ScreenController
 import co.billionlabs.farredpostablesdemo.utils.PythonHelper
 import co.billionlabs.farredpostablesdemo.utils.PupilTrackingHelper
@@ -131,20 +133,40 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
     var videoPath by remember { mutableStateOf<String?>(null) }
     var isRecording by remember { mutableStateOf(false) }
     var isInSequence by remember { mutableStateOf(false) }
+    var isCountdown by remember { mutableStateOf(false) }
+    var countdownTime by remember { mutableStateOf(5) }
     var currentBackgroundColor by remember { mutableStateOf(Color.Red) }
     var sequencePhase by remember { mutableStateOf("") }
     var pythonTestResult by remember { mutableStateOf<String?>(null) }
     
     // Pupil tracking states
     var pupilData by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
+    var pupilImagePath by remember { mutableStateOf<String?>(null) }
     var showPupilDialog by remember { mutableStateOf(false) }
     var isProcessingVideo by remember { mutableStateOf(false) }
     var processingMessage by remember { mutableStateOf("") }
     
+    // Camera states
+    var useFrontCamera by remember { mutableStateOf(true) }
+    var camera by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
+    var shouldStartActualRecording by remember { mutableStateOf(false) }
+    
+    // Handle camera mode changes
+    LaunchedEffect(useFrontCamera) {
+        if (useFrontCamera) {
+            // Front camera mode: Start with maximum brightness for visibility
+            screenController.setMaximumBrightness()
+        } else {
+            // Back camera mode: Use higher brightness for better visibility
+            screenController.setMaximumBrightness()
+        }
+    }
+    
     // Initialize screen settings
     LaunchedEffect(Unit) {
         screenController.saveCurrentBrightness()
-        screenController.setMinimumBrightness()
+        // Start with maximum brightness for front camera visibility
+        screenController.setMaximumBrightness()
         screenController.setBackgroundColor(Color.Red)
         screenController.setFullscreen()
     }
@@ -157,31 +179,78 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
         }
     }
     
-    // Handle the brightness/color sequence
-    LaunchedEffect(isInSequence) {
-        if (isInSequence) {
-            // Phase 1: 1 second dim red (already set)
-            sequencePhase = "Dim Red (1s)"
-            currentBackgroundColor = Color.Red
-            delay(1000)
-            
-            // Phase 2: 2 seconds bright white
-            sequencePhase = "Bright White (2s)"
-            currentBackgroundColor = Color.White
-            screenController.setMaximumBrightness()
-            screenController.setBackgroundColor(Color.White)
-            delay(2000)
-            
-            // Phase 3: 2 seconds dim red
-            sequencePhase = "Dim Red (2s)"
-            currentBackgroundColor = Color.Red
-            screenController.setMinimumBrightness()
+    // Handle countdown for front camera
+    LaunchedEffect(isCountdown) {
+        if (isCountdown && useFrontCamera) {
+            // Dim the screen and start countdown
+//            screenController.setMinimumBrightness()
             screenController.setBackgroundColor(Color.Red)
-            delay(2000)
+            countdownTime = 5
+            
+            repeat(5) {
+                delay(1000)
+                countdownTime--
+            }
+            
+            // Start the actual recording sequence
+            isCountdown = false
+            isInSequence = true
+            shouldStartActualRecording = true
+        }
+    }
+    
+    // Handle the brightness/color sequence
+    LaunchedEffect(isInSequence, useFrontCamera) {
+        if (isInSequence) {
+            if (useFrontCamera) {
+                // Front camera mode: Use screen lighting
+                // Phase 1: 0.5 second dim red (already set)
+                sequencePhase = "Dim Red (1s) - Front Camera"
+                currentBackgroundColor = Color.Red
+//                screenController.setMinimumBrightness() // Keep minimum for dim red
+                delay(500)
+                
+                // Phase 2: 1.5 seconds bright white
+                sequencePhase = "Bright White (1s) - Front Camera"
+                currentBackgroundColor = Color.White
+                screenController.setMaximumBrightness()
+                screenController.setBackgroundColor(Color.White)
+                delay(1500)
+                
+                // Phase 3: 3 seconds dim red
+                sequencePhase = "Dim Red (3s) - Front Camera"
+                currentBackgroundColor = Color.Red
+//                screenController.setMinimumBrightness()
+                screenController.setBackgroundColor(Color.Red)
+                delay(3000)
+            } else {
+                // Back camera mode: Use flash with high screen brightness
+                // Phase 1: 0.5 second no flash (keep high brightness)
+                sequencePhase = "No Flash (1s) - Back Camera"
+                currentBackgroundColor = Color.Red
+                screenController.setMaximumBrightness() // Keep high brightness for visibility
+                disableFlash(camera)
+                delay(500)
+                
+                // Phase 2: 1.5 seconds with flash
+                sequencePhase = "Flash On (1s) - Back Camera"
+                currentBackgroundColor = Color.White
+                screenController.setMaximumBrightness() // Keep high brightness
+                enableFlash(camera)
+                delay(1500)
+                
+                // Phase 3: 3 seconds no flash
+                sequencePhase = "No Flash (3s) - Back Camera"
+                currentBackgroundColor = Color.Red
+                screenController.setMaximumBrightness() // Keep high brightness
+                disableFlash(camera)
+                delay(3000)
+            }
             
             // Reset
             sequencePhase = ""
             isInSequence = false
+            shouldStartActualRecording = false
         }
     }
     
@@ -206,36 +275,29 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                     color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
                 )
                 
+                Text(
+                    text = if (useFrontCamera) "Front Camera (Screen Light)" else "Back Camera (Flash + Bright Screen)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
+                )
+                
                 Spacer(modifier = Modifier.height(8.dp))
-                
-                Button(
-                    onClick = {
-                        pythonTestResult = pupilHelper?.testPythonIntegration() 
-                            ?: "Python not initialized"
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (currentBackgroundColor == Color.White) Color.Blue else Color.Green
-                    )
-                ) {
-                    Text(
-                        text = if (pupilHelper != null) "Test Python" else "Python Not Available",
-                        color = Color.White
-                    )
-                }
-                
-                pythonTestResult?.let { result ->
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = result,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (currentBackgroundColor == Color.White) Color.Black else Color.White,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 when {
+                    isCountdown -> {
+                        Text(
+                            text = "Get Ready!",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Recording starts in: $countdownTime",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White
+                        )
+                    }
                     isInSequence -> {
                         Text(
                             text = sequencePhase,
@@ -315,8 +377,9 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                         processVideoForPupilTracking(
                             path, 
                             pupilHelper!!,
-                            onProcessingComplete = { data ->
+                            onProcessingComplete = { data, imagePath ->
                                 pupilData = data
+                                pupilImagePath = imagePath
                                 showPupilDialog = true
                                 isProcessingVideo = false
                                 processingMessage = ""
@@ -327,15 +390,39 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                                 Log.e("MainActivity", "Pupil processing error: $error")
                             }
                         )
-                        isProcessingVideo = true
-                        processingMessage = "Processing video for pupil tracking..."
                     }
                 },
                 onRecordingStateChanged = { recording ->
                     isRecording = recording
-                    if (recording) {
+                },
+                useFrontCamera = useFrontCamera,
+                onCameraChanged = { newUseFrontCamera ->
+                    useFrontCamera = newUseFrontCamera
+                    Log.d("MainActivity", "Camera switched to: ${if (newUseFrontCamera) "Front" else "Back"}")
+                },
+                onCameraReady = { cam ->
+                    camera = cam
+                    Log.d("MainActivity", "Camera ready: ${if (useFrontCamera) "Front" else "Back"}")
+                },
+                shouldStartActualRecording = shouldStartActualRecording,
+                onRecordButtonPressed = {
+                    Log.d("MainActivity", "Record button pressed")
+                    if (useFrontCamera) {
+                        // Front camera: Start countdown first
+                        isCountdown = true
+                    } else {
+                        // Back camera: Start sequence immediately
                         isInSequence = true
+                        shouldStartActualRecording = true
                     }
+                },
+                onRecordingCompleted = {
+                    Log.d("MainActivity", "Recording completed - restoring brightness")
+                    // Restore maximum brightness after recording
+                    screenController.setMaximumBrightness()
+                    // Immediately show processing UI
+                    isProcessingVideo = true
+                    processingMessage = "Processing video for pupil tracking..."
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -345,9 +432,11 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
         if (showPupilDialog) {
             PupilDataDialog(
                 pupilData = pupilData,
+                imagePath = pupilImagePath,
                 onDismiss = {
                     showPupilDialog = false
                     pupilData = emptyList()
+                    pupilImagePath = null
                 }
             )
         }
@@ -360,7 +449,7 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
 private fun processVideoForPupilTracking(
     videoPath: String,
     pupilHelper: PupilTrackingHelper,
-    onProcessingComplete: (List<Map<String, Any>>) -> Unit = {},
+    onProcessingComplete: (List<Map<String, Any>>, String?) -> Unit = { _, _ -> },
     onProcessingError: (String) -> Unit = {}
 ) {
     // This would be called from a coroutine scope in a real implementation
@@ -378,10 +467,13 @@ private fun processVideoForPupilTracking(
             
             // Get pupil data from the output directory returned by the pipeline
             val outputDir = result["outputDir"]?.toString() ?: videoFile.parent ?: ""
-            val pupilData = pupilHelper.getPupilTimeSeries(outputDir, videoName)
+            val pupilResult = pupilHelper.getPupilTimeSeries(outputDir, videoName)
+            val pupilData = pupilResult["pupilData"] as? List<Map<String, Any>> ?: emptyList()
+            val imagePath = pupilResult["imagePath"] as? String
+            val imagePathOrNull = if (imagePath.isNullOrEmpty()) null else imagePath
             
             Log.d("MainActivity", "Pupil tracking completed, found ${pupilData.size} data points")
-            onProcessingComplete(pupilData)
+            onProcessingComplete(pupilData, imagePathOrNull)
         } else {
             val errorMsg = result["message"]?.toString() ?: "Unknown error"
             Log.e("MainActivity", "Pupil tracking failed: $errorMsg")
