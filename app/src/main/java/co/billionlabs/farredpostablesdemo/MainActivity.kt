@@ -208,14 +208,14 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 sequencePhase = "Dim Red (1s) - Front Camera"
                 currentBackgroundColor = Color.Red
 //                screenController.setMinimumBrightness() // Keep minimum for dim red
-                delay(500)
+                delay(1000)
                 
                 // Phase 2: 1.5 seconds bright white
                 sequencePhase = "Bright White (1s) - Front Camera"
                 currentBackgroundColor = Color.White
                 screenController.setMaximumBrightness()
                 screenController.setBackgroundColor(Color.White)
-                delay(1500)
+                delay(1000)
                 
                 // Phase 3: 3 seconds dim red
                 sequencePhase = "Dim Red (3s) - Front Camera"
@@ -254,118 +254,113 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
         }
     }
     
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Top third - Dynamic background with status
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Top quarter - entirely blank for solid color (red/white/red) to impact pupil size
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp)
+                .fillMaxHeight(0.25f)
                 .background(currentBackgroundColor)
+        )
+
+        // Bottom three quarters - condensed status and camera preview
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
         ) {
+            // Condensed status area
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
                     text = "Pupil Video Recording",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
-                
                 Text(
                     text = if (useFrontCamera) "Front Camera (Screen Light)" else "Back Camera (Flash + Bright Screen)",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
                 when {
                     isCountdown -> {
                         Text(
-                            text = "Get Ready!",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Recording starts in: $countdownTime",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = Color.White
+                            text = "Get Ready! Recording starts in: $countdownTime",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                     isInSequence -> {
                         Text(
                             text = sequencePhase,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = "Recording in progress...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     isRecording -> {
                         Text(
                             text = "Recording... (5 seconds)",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (currentBackgroundColor == Color.White) Color.Black else Color.White
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                     isProcessingVideo -> {
                         Text(
                             text = processingMessage,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = Color.Yellow
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
                         )
                         Text(
                             text = "Please wait...",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     videoPath != null -> {
                         Text(
                             text = "Video saved successfully!",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = Color.Green
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
                         )
                         Text(
                             text = "Path: ${videoPath?.substringAfterLast("/")}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         if (processingMessage.isNotEmpty()) {
                             Text(
                                 text = processingMessage,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.Red
+                                color = MaterialTheme.colorScheme.error
                             )
                         }
                     }
                     else -> {
                         Text(
                             text = "Tap the red button to start recording",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = Color.White
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
-        }
-        
-        // Bottom two thirds - Camera preview
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight()
-                .padding(top = 200.dp)
-        ) {
+
+            // Camera preview - takes remaining space in bottom 3/4
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
             CameraPreview(
                 onVideoRecorded = { path ->
                     videoPath = path
@@ -426,8 +421,9 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                 },
                 modifier = Modifier.fillMaxSize()
             )
+            }
         }
-        
+
         // Show pupil data dialog when processing is complete
         if (showPupilDialog) {
             PupilDataDialog(
