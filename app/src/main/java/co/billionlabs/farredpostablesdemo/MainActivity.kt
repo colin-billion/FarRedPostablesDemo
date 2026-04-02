@@ -404,7 +404,10 @@ fun VideoRecordingScreen(pupilHelper: PupilTrackingHelper?) {
                     Log.d("MainActivity", "Record button pressed")
                     if (useFrontCamera) {
                         // Front camera: Start countdown first
-                        isCountdown = true
+//                        isCountdown = true
+                        // Front camera: Start sequence immediately
+                        isInSequence = true
+                        shouldStartActualRecording = true
                     } else {
                         // Back camera: Start sequence immediately
                         isInSequence = true

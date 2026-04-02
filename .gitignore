@@ -13,3 +13,5 @@
 .externalNativeBuild
 .cxx
 local.properties
+/.idea/inspectionProfiles/Project_Default.xml
+/data/output/pupil_tracking_clean_pupil_video_20250923_163722.mp4
